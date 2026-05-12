@@ -1,0 +1,12 @@
+scraping:
+  request_timeout: 30
+  delay_between_requests: 2  # seconds between article fetches to avoid rate limiting
+  max_articles_per_source: 20
+
+groq:
+  model: llama-3.3-70b-versatile
+  temperature: 0.1
+
+database:
+  pool_size: 5
+  max_overflow: 10

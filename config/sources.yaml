@@ -1,0 +1,45 @@
+sources:
+  - name: Economic Times Corporate
+    url: https://economictimes.indiatimes.com/news/company/corporate-trends
+    domain: economictimes.indiatimes.com
+    link_contains: /news/company/
+
+  - name: Moneycontrol Business
+    url: https://www.moneycontrol.com/news/business/
+    domain: moneycontrol.com
+    link_contains: /news/business/
+
+  - name: Livemint Companies
+    url: https://www.livemint.com/companies
+    domain: livemint.com
+    link_contains: /companies/
+
+  - name: Financial Express Companies
+    url: https://www.financialexpress.com/market/
+    domain: financialexpress.com
+    link_contains: /market/
+
+  - name: Reuters Business
+    url: https://www.reuters.com/business/
+    domain: reuters.com
+    link_contains: /business/
+
+  - name: Bloomberg Asia
+    url: https://www.bloomberg.com/asia
+    domain: bloomberg.com
+    link_contains: /news/articles/
+
+  - name: Financial Times
+    url: https://www.ft.com
+    domain: ft.com
+    link_contains: /content/
+
+  - name: CNBC Finance
+    url: https://www.cnbc.com/finance/
+    domain: cnbc.com
+    link_contains: /2026/
+
+  - name: Wall Street Journal Business
+    url: https://www.wsj.com/business
+    domain: wsj.com
+    link_contains: /articles/

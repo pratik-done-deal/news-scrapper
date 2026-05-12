@@ -1,0 +1,1 @@
+ALTER TABLE deals ADD COLUMN IF NOT EXISTS sub_sector TEXT;
