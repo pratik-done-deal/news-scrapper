@@ -1,6 +1,7 @@
 import logging
 import re
 import time
+from abc import ABC, abstractmethod
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from urllib.parse import urljoin, urlparse
@@ -66,12 +67,69 @@ def _parse_et_listing_date(text: str) -> Optional[datetime]:
         return None
 
 
-class WebScraper:
+# Livemint listing date formats:
+#   Today's articles:   "4 min read 03:04 PM IST"  → time only, combine with today's date
+#   Older articles:     "1 min read 12 May 2026"   → full date, no time
+_LM_TIME_RE = re.compile(r'(\d{1,2}:\d{2}\s*[AP]M)\s*IST', re.IGNORECASE)
+_LM_DATE_RE = re.compile(r'(\d{1,2}\s+\w{3,9}\s+\d{4})', re.IGNORECASE)
+
+
+def _parse_lm_listing_date(text: str) -> Optional[datetime]:
+    """
+    Parse a date from Livemint's dateNew span.
+    Handles two formats:
+      - 'HH:MM AM/PM IST'  (today's articles) → combines with today's date in IST
+      - 'DD Mon YYYY'      (older articles)    → parses directly, midnight IST
+    """
+    m = _LM_TIME_RE.search(text)
+    if m:
+        try:
+            t = datetime.strptime(m.group(1).strip(), '%I:%M %p')
+            today = datetime.now(tz=IST).date()
+            return datetime(today.year, today.month, today.day, t.hour, t.minute, tzinfo=IST)
+        except ValueError:
+            pass
+
+    m = _LM_DATE_RE.search(text)
+    if m:
+        raw = re.sub(r'\s+', ' ', m.group(1).strip())
+        for fmt in ('%d %B %Y', '%d %b %Y'):
+            try:
+                return datetime.strptime(raw, fmt).replace(tzinfo=IST)
+            except ValueError:
+                continue
+
+    return None
+
+
+class WebScraper(ABC):
     def __init__(self, request_timeout: int = 30, delay: float = 2.0):
         self.timeout = request_timeout
         self.delay = delay
         self.session = requests.Session()
         self.session.headers.update(HEADERS)
+
+    # ------------------------------------------------------------------
+    # Abstract methods — each subclass implements these for its site
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    def _listing_links_with_dates(
+        self,
+        html: str,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+    ) -> list[tuple[str, Optional[datetime]]]:
+        """Parse a listing page and return (url, date) pairs for each article card."""
+
+    @abstractmethod
+    def _get_next_page_url(self, html: str, current_url: str) -> Optional[str]:
+        """Return the URL of the next listing page, or None if there isn't one."""
+
+    # ------------------------------------------------------------------
+    # Generic internals
+    # ------------------------------------------------------------------
 
     def _fetch_html(self, url: str) -> Optional[str]:
         try:
@@ -83,10 +141,19 @@ class WebScraper:
             return None
 
     def _extract_date_from_html(self, html: str) -> Optional[datetime]:
-        """Extract publication date from an ET article page."""
+        """Extract publication date from an article page."""
         soup = BeautifulSoup(html, "lxml")
 
-        # 1. Try <time datetime="..."> — most reliable when present
+        # 1. Open Graph / article meta tags (used by Livemint and many modern sites)
+        for prop in ("article:published_time", "article:modified_time"):
+            tag = soup.find("meta", property=prop)
+            if tag and tag.get("content"):
+                try:
+                    return datetime.fromisoformat(tag["content"].replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+
+        # 2. Try <time datetime="..."> — most reliable when present
         for time_tag in soup.find_all("time"):
             dt_attr = time_tag.get("datetime", "")
             if dt_attr:
@@ -112,25 +179,6 @@ class WebScraper:
         # 3. Full-page text scan as last resort
         return _parse_et_article_date(soup.get_text(" "))
 
-    def _get_next_page_url(self, html: str, current_url: str) -> Optional[str]:
-        """Find the next listing-page URL using ET's articlelist pagination pattern."""
-        # If we're already on a paginated URL (.../articlelist/msid-NNN,page-N.cms), increment N
-        page_match = re.search(r'(articlelist/msid-(\d+),page-)(\d+)(\.cms)', current_url)
-        if page_match:
-            next_page = int(page_match.group(3)) + 1
-            return re.sub(
-                r'(articlelist/msid-\d+,page-)\d+(\.cms)',
-                rf'\g<1>{next_page}\g<2>',
-                current_url,
-            )
-
-        # First page — find the embedded page-2 href in the HTML (ET puts it in a script-wrapped <a>)
-        m = re.search(r'href="(https?://[^"]+articlelist/msid-(\d+),page-2\.cms)"', html)
-        if m:
-            return m.group(1)
-
-        return None
-
     def _bs_left(self, items: list[tuple[str, Optional[datetime]]], end_date: datetime) -> int:
         """First index in descending-date list where date <= end_date."""
         lo, hi, left = 0, len(items) - 1, len(items)
@@ -155,52 +203,6 @@ class WebScraper:
                 hi = mid - 1
         return right
 
-    def _listing_links_with_dates(
-        self,
-        html: str,
-        source_url: str,
-        domain: str,
-        link_contains: str,
-    ) -> list[tuple[str, Optional[datetime]]]:
-        """
-        Return (url, date) pairs from an ET listing page.
-        Uses <div class="eachStory"> containers which each hold exactly one
-        article link and one <time class="date-format" data-time="..."> tag.
-        """
-        soup = BeautifulSoup(html, "lxml")
-        seen: set[str] = set()
-        results: list[tuple[str, Optional[datetime]]] = []
-
-        for story in soup.find_all("div", class_="eachStory"):
-            # Article URL — first matching <a href> inside this story card
-            url: Optional[str] = None
-            for a in story.find_all("a", href=True):
-                href = a["href"].strip()
-                full_url = urljoin(source_url, href)
-                parsed = urlparse(full_url)
-                if (
-                    domain in parsed.netloc
-                    and link_contains in parsed.path
-                    and parsed.path not in ("", "/", link_contains)
-                    and not parsed.fragment
-                ):
-                    url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-                    break
-
-            if not url or url in seen:
-                continue
-            seen.add(url)
-
-            # Date — ET puts it in <time class="date-format" data-time="May 12, 2026, 12:19 PM IST">
-            date: Optional[datetime] = None
-            time_tag = story.find("time", class_="date-format")
-            if time_tag and time_tag.get("data-time"):
-                date = _parse_et_listing_date(time_tag["data-time"])
-
-            results.append((url, date))
-
-        return results
-
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -212,7 +214,7 @@ class WebScraper:
         link_contains: str,
         max_articles: int = 20,
     ) -> list[str]:
-        """Single-page link collection (original behaviour)."""
+        """Single-page link collection."""
         html = self._fetch_html(source_url)
         if not html:
             return []
@@ -252,9 +254,8 @@ class WebScraper:
         Paginate through listing pages and collect article URLs whose listing-page
         date falls within [start_date, end_date].
 
-        Stops pagination early once every article on a page is older than start_date.
-        For links where no listing date is found, they are included and their date
-        is verified later when the article is fetched.
+        Uses binary search within each page to find the in-range window without
+        iterating every card. Stops pagination once all remaining pages are too old.
         """
         collected: list[str] = []
         current_url = source_url
@@ -363,3 +364,156 @@ class WebScraper:
             logger.warning(f"  Could not extract date from article: {url[-70:]}")
 
         return title, content, published_date
+
+
+class ETScraper(WebScraper):
+    """WebScraper implementation for Economic Times listing pages."""
+
+    def _listing_links_with_dates(
+        self,
+        html: str,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+    ) -> list[tuple[str, Optional[datetime]]]:
+        """
+        Parse ET listing page cards (<div class="eachStory">) and return
+        (url, date) pairs. Date comes from <time class="date-format" data-time="...">.
+        """
+        soup = BeautifulSoup(html, "lxml")
+        seen: set[str] = set()
+        results: list[tuple[str, Optional[datetime]]] = []
+
+        for story in soup.find_all("div", class_="eachStory"):
+            url: Optional[str] = None
+            for a in story.find_all("a", href=True):
+                href = a["href"].strip()
+                full_url = urljoin(source_url, href)
+                parsed = urlparse(full_url)
+                if (
+                    domain in parsed.netloc
+                    and link_contains in parsed.path
+                    and parsed.path not in ("", "/", link_contains)
+                    and not parsed.fragment
+                ):
+                    url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                    break
+
+            if not url or url in seen:
+                continue
+            seen.add(url)
+
+            date: Optional[datetime] = None
+            time_tag = story.find("time", class_="date-format")
+            if time_tag and time_tag.get("data-time"):
+                date = _parse_et_listing_date(time_tag["data-time"])
+
+            results.append((url, date))
+
+        return results
+
+    def _get_next_page_url(self, html: str, current_url: str) -> Optional[str]:
+        """
+        ET pagination pattern: .../articlelist/msid-NNN,page-N.cms
+        Increments the page number, or finds the page-2 link on the first page.
+        """
+        page_match = re.search(r'(articlelist/msid-(\d+),page-)(\d+)(\.cms)', current_url)
+        if page_match:
+            next_page = int(page_match.group(3)) + 1
+            return re.sub(
+                r'(articlelist/msid-\d+,page-)\d+(\.cms)',
+                rf'\g<1>{next_page}\g<2>',
+                current_url,
+            )
+
+        m = re.search(r'href="(https?://[^"]+articlelist/msid-(\d+),page-2\.cms)"', html)
+        if m:
+            return m.group(1)
+
+        return None
+
+
+class LivemintScraper(WebScraper):
+    """
+    WebScraper for Livemint using the internal CMS JSON API.
+
+    Source URL must be the API listing endpoint:
+      https://www.livemint.com/api/cms/page/v2/listing?url=/companies&page=1
+
+    The API returns 20 articles per page with clean ISO 8601 dates, enabling
+    full date-range pagination without needing a headless browser.
+    """
+
+    _LM_API_PAGE_RE = re.compile(r'([&?]page=)(\d+)', re.IGNORECASE)
+
+    def _parse_api_response(
+        self,
+        text: str,
+        domain: str,
+        link_contains: str,
+    ) -> list[tuple[str, Optional[datetime]]]:
+        """Parse the CMS JSON response and return (url, date) pairs."""
+        try:
+            data = __import__("json").loads(text)
+        except Exception:
+            return []
+
+        results: list[tuple[str, Optional[datetime]]] = []
+        seen: set[str] = set()
+
+        for article in data.get("content", []):
+            rel_url = article.get("url", "")
+            if not rel_url or link_contains not in rel_url:
+                continue
+            full_url = f"https://{domain}{rel_url}"
+            if full_url in seen:
+                continue
+            seen.add(full_url)
+
+            date: Optional[datetime] = None
+            raw_date = article.get("firstPublishedDate") or article.get("lastPublishedDate")
+            if raw_date:
+                try:
+                    date = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+
+            results.append((full_url, date))
+
+        return results
+
+    def _listing_links_with_dates(
+        self,
+        html: str,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+    ) -> list[tuple[str, Optional[datetime]]]:
+        return self._parse_api_response(html, domain, link_contains)
+
+    def _get_next_page_url(self, html: str, current_url: str) -> Optional[str]:
+        """Increment the page=N parameter in the API URL.
+        Livemint's listing only exposes ~10 pages of content; page 11+
+        loops back to the same recent articles, so we stop there.
+        """
+        m = self._LM_API_PAGE_RE.search(current_url)
+        if m:
+            next_page = int(m.group(2)) + 1
+            if next_page > 10:
+                return None
+            return self._LM_API_PAGE_RE.sub(rf"\g<1>{next_page}", current_url)
+        return None
+
+    def get_article_links(
+        self,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+        max_articles: int = 20,
+    ) -> list[str]:
+        """Fetch first page from the JSON API and return article URLs."""
+        text = self._fetch_html(source_url)
+        if not text:
+            return []
+        items = self._parse_api_response(text, domain, link_contains)
+        return [url for url, _ in items[:max_articles]]

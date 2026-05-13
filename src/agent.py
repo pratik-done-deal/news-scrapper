@@ -7,7 +7,12 @@ from groq import Groq
 from .db.repository import NewsRepository
 from .processor.extractor import DealExtractor
 from .processor.filter import NewsFilter
-from .scraper.web_scraper import WebScraper
+from .scraper.web_scraper import ETScraper, LivemintScraper, WebScraper
+
+SCRAPER_REGISTRY: dict[str, type[WebScraper]] = {
+    "et": ETScraper,
+    "livemint": LivemintScraper,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +34,11 @@ class NewsAgent:
         scraping = settings["scraping"]
         db_cfg = settings.get("database", {})
 
-        self.scraper = WebScraper(
-            request_timeout=scraping["request_timeout"],
-            delay=scraping["delay_between_requests"],
-        )
+        self._scraper_kwargs = {
+            "request_timeout": scraping["request_timeout"],
+            "delay": scraping["delay_between_requests"],
+        }
+        self._scrapers: dict[str, WebScraper] = {}
         self.filter = NewsFilter()
         self.extractor = DealExtractor(groq_client, model)
         self.repo = NewsRepository(
@@ -41,6 +47,12 @@ class NewsAgent:
             max_overflow=db_cfg.get("max_overflow", 10),
         )
         self.max_articles = scraping["max_articles_per_source"]
+
+    def _get_scraper(self, scraper_type: str) -> WebScraper:
+        if scraper_type not in self._scrapers:
+            cls = SCRAPER_REGISTRY[scraper_type]
+            self._scrapers[scraper_type] = cls(**self._scraper_kwargs)
+        return self._scrapers[scraper_type]
 
     def run(
         self,
@@ -63,16 +75,19 @@ class NewsAgent:
             logger.info(f"Date range filter: {start_date} → {end_date} (IST)")
 
         logger.info(f"Agent run started — {len(sources)} source(s)")
+
         total_scraped = total_new = total_deals = 0
 
         for source in sources:
             name = source["name"]
             logger.info(f"Scraping: {name}")
 
+            scraper_type = source.get("scraper", "et")
+            scraper = self._get_scraper(scraper_type)
             use_date_range = dt_start and dt_end and source.get("paginate", False)
 
             if use_date_range:
-                links = self.scraper.get_article_links_in_date_range(
+                links = scraper.get_article_links_in_date_range(
                     source_url=source["url"],
                     domain=source["domain"],
                     link_contains=source["link_contains"],
@@ -81,7 +96,7 @@ class NewsAgent:
                     max_pages=source.get("max_pages", 10),
                 )
             else:
-                links = self.scraper.get_article_links(
+                links = scraper.get_article_links(
                     source_url=source["url"],
                     domain=source["domain"],
                     link_contains=source["link_contains"],
@@ -93,10 +108,10 @@ class NewsAgent:
 
             for url in links:
                 if self.repo.url_exists(url):
-                    logger.debug(f"  Skip (already in DB): {url}")
+                    logger.info(f"  Skip (already in DB): {url[-60:]}")
                     continue
 
-                title, content, published_date = self.scraper.extract_article(url)
+                title, content, published_date = scraper.extract_article(url)
                 if not content:
                     logger.warning(f"  Skip (no content extracted): {url}")
                     continue

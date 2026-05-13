@@ -3,6 +3,7 @@ sources:
     url: https://economictimes.indiatimes.com/news/company/corporate-trends
     domain: economictimes.indiatimes.com
     link_contains: /news/company/
+    scraper: et
     paginate: true      # enables multi-page date-range scraping when --start-date/--end-date are passed
     max_pages: 20       # how many listing pages to walk through
 
@@ -11,10 +12,13 @@ sources:
   #   domain: moneycontrol.com
   #   link_contains: /news/business/
 
-  # - name: Livemint Companies
-  #   url: https://www.livemint.com/companies
-  #   domain: livemint.com
-  #   link_contains: /companies/
+  - name: Livemint Companies
+    url: https://www.livemint.com/api/cms/page/v2/listing?url=/companies&page=1
+    domain: livemint.com
+    link_contains: /companies/
+    scraper: livemint
+    paginate: true
+    max_pages: 10     # Livemint listing only exposes ~13 days of articles; page 11+ loops back
 
   # - name: Financial Express Companies
   #   url: https://www.financialexpress.com/market/
@@ -42,6 +46,6 @@ sources:
   #   link_contains: /2026/
 
   # - name: Wall Street Journal Business
-  #   url: https://www.wsj.com/business
+  #   url: https://www.wsj.com/business/deals?page=1
   #   domain: wsj.com
   #   link_contains: /articles/
