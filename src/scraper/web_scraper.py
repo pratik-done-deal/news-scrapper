@@ -131,6 +131,30 @@ class WebScraper:
 
         return None
 
+    def _bs_left(self, items: list[tuple[str, Optional[datetime]]], end_date: datetime) -> int:
+        """First index in descending-date list where date <= end_date."""
+        lo, hi, left = 0, len(items) - 1, len(items)
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if items[mid][1] <= end_date:
+                left = mid
+                hi = mid - 1
+            else:
+                lo = mid + 1
+        return left
+
+    def _bs_right(self, items: list[tuple[str, Optional[datetime]]], start_date: datetime) -> int:
+        """Last index in descending-date list where date >= start_date."""
+        lo, hi, right = 0, len(items) - 1, -1
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if items[mid][1] >= start_date:
+                right = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return right
+
     def _listing_links_with_dates(
         self,
         html: str,
@@ -247,52 +271,65 @@ class WebScraper:
                 logger.info(f"  [Page {page_num}] No article cards found, stopping")
                 break
 
-            dated_count = sum(1 for _, d in items if d is not None)
-            too_old_count = sum(1 for _, d in items if d is not None and d < start_date)
-            too_new_count = sum(1 for _, d in items if d is not None and d > end_date)
-            in_range_count = 0
+            first_date = items[0][1]
+            last_date = items[-1][1]
+            logger.info(
+                f"  [Page {page_num}] Date span: {last_date.strftime('%Y-%m-%d')} "
+                f"→ {first_date.strftime('%Y-%m-%d')}"
+            )
 
-            # Log the date span of this page so you can see where in time we are
-            dates_on_page = [d for _, d in items if d is not None]
-            if dates_on_page:
-                logger.info(
-                    f"  [Page {page_num}] Date span: {min(dates_on_page).strftime('%Y-%m-%d')} "
-                    f"→ {max(dates_on_page).strftime('%Y-%m-%d')} | "
-                    f"too_new={too_new_count} in_range=? too_old={too_old_count}"
-                )
+            # Entire page too old — no subsequent page can be in range
+            if first_date < start_date:
+                logger.info(f"  [Page {page_num}] Entire page too old — stopping pagination")
+                break
 
-            for url, listing_date in items:
-                if listing_date is not None:
-                    if listing_date > end_date:
-                        logger.info(f"    SKIP (too new  {listing_date.strftime('%Y-%m-%d')}): ...{url[-60:]}")
-                        continue
-                    if listing_date < start_date:
-                        logger.info(f"    SKIP (too old  {listing_date.strftime('%Y-%m-%d')}): ...{url[-60:]}")
-                        continue
-                    logger.info(f"    QUEUE ({listing_date.strftime('%Y-%m-%d')}): ...{url[-60:]}")
-                else:
-                    logger.info(f"    QUEUE (no listing date): ...{url[-60:]}")
+            # Entire page too new — range might start on a later page
+            if last_date > end_date:
+                logger.info(f"  [Page {page_num}] Entire page too new — skipping to next page")
+                next_url = self._get_next_page_url(html, current_url)
+                if not next_url or next_url == current_url:
+                    logger.info(f"  [Page {page_num}] No next page — stopping")
+                    break
+                current_url = next_url
+                time.sleep(self.delay)
+                continue
 
+            left = self._bs_left(items, end_date)
+            right = self._bs_right(items, start_date)
+            logger.info(f"  [Page {page_num}] Binary search bounds: [{left}, {right}] of {len(items)} cards")
+
+            # Page spans our range but no card lands exactly in it — move to next page
+            if left > right:
+                logger.info(f"  [Page {page_num}] No cards in range on this page — continuing")
+                next_url = self._get_next_page_url(html, current_url)
+                if not next_url or next_url == current_url:
+                    break
+                current_url = next_url
+                time.sleep(self.delay)
+                continue
+
+            new_count = 0
+            for url, date in items[left:right + 1]:
                 if url not in collected:
                     collected.append(url)
-                    if listing_date is not None:
-                        in_range_count += 1
+                    new_count += 1
+                    logger.info(f"    QUEUE ({date.strftime('%Y-%m-%d')}): ...{url[-60:]}")
 
             logger.info(
-                f"  [Page {page_num}] Queued {in_range_count} new articles | "
+                f"  [Page {page_num}] Queued {new_count} new articles | "
                 f"total collected so far: {len(collected)}"
             )
 
-            # Stop once all dated articles on a page are older than start_date
-            if dated_count > 0 and too_old_count == dated_count:
-                logger.info("  All articles on this page are older than start_date — stopping pagination")
+            # Right boundary is mid-page — all subsequent pages are older than start_date
+            if right < len(items) - 1:
+                logger.info(f"  [Page {page_num}] Right boundary mid-page — stopping pagination")
                 break
 
             next_url = self._get_next_page_url(html, current_url)
             if not next_url or next_url == current_url:
-                logger.info(f"  [Page {page_num}] No next page found — stopping pagination")
+                logger.info(f"  [Page {page_num}] No next page — stopping")
                 break
-            logger.info(f"  [Page {page_num}] Next page → {next_url}")
+            logger.info(f"  [Page {page_num}] Range may continue on next page → {next_url}")
             current_url = next_url
             time.sleep(self.delay)
 
