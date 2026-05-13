@@ -20,6 +20,7 @@ class Article(Base):
     title = Column(Text)
     content = Column(Text)
     scraped_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    published_at = Column(DateTime(timezone=True), nullable=True)
     is_ma_relevant = Column(Boolean, default=None)
     is_processed = Column(Boolean, default=False)
 

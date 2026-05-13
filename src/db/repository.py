@@ -37,6 +37,7 @@ class NewsRepository:
         source: str,
         title: Optional[str],
         content: Optional[str],
+        published_at=None,
     ) -> Article:
         article = Article(
             url=url,
@@ -44,6 +45,7 @@ class NewsRepository:
             source=source,
             title=title,
             content=content,
+            published_at=published_at,
         )
         with Session(self.engine) as session:
             session.add(article)
