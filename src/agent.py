@@ -7,11 +7,12 @@ from groq import Groq
 from .db.repository import NewsRepository
 from .processor.extractor import DealExtractor
 from .processor.filter import NewsFilter
-from .scraper.web_scraper import ETScraper, LivemintScraper, WebScraper
+from .scraper.web_scraper import CNBCScraper, ETScraper, FEScraper, WebScraper
 
 SCRAPER_REGISTRY: dict[str, type[WebScraper]] = {
     "et": ETScraper,
-    "livemint": LivemintScraper,
+    "fe": FEScraper,
+    "cnbc": CNBCScraper,
 }
 
 logger = logging.getLogger(__name__)

@@ -517,3 +517,237 @@ class LivemintScraper(WebScraper):
             return []
         items = self._parse_api_response(text, domain, link_contains)
         return [url for url, _ in items[:max_articles]]
+
+
+class WSJScraper(WebScraper):
+    """
+    WebScraper for WSJ section listing pages (e.g. /business/deals).
+
+    Article data (URL + timestamp) is embedded in __NEXT_DATA__ JSON on each
+    listing page under pageProps.moreInArticles. Pagination uses ?page=N.
+    Article pages expose article:published_time for date extraction.
+    """
+
+    _WSJ_PAGE_RE = re.compile(r'([?&]page=)(\d+)', re.IGNORECASE)
+
+    def _parse_listing_html(
+        self,
+        html: str,
+        domain: str,
+        link_contains: str,
+    ) -> list[tuple[str, Optional[datetime]]]:
+        """Extract (url, date) pairs from __NEXT_DATA__ moreInArticles list."""
+        import json as _json
+        m = re.search(
+            r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S
+        )
+        if not m:
+            return []
+        try:
+            data = _json.loads(m.group(1))
+            articles = data["props"]["pageProps"]["moreInArticles"]
+        except (KeyError, ValueError):
+            return []
+
+        seen: set[str] = set()
+        results: list[tuple[str, Optional[datetime]]] = []
+
+        for article in articles:
+            url = article.get("articleUrl", "")
+            if not url or link_contains not in url or url in seen:
+                continue
+            # Strip tracking query params
+            parsed = urlparse(url)
+            clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            if clean_url in seen:
+                continue
+            seen.add(clean_url)
+
+            date: Optional[datetime] = None
+            ts = article.get("timestamp")
+            if ts:
+                try:
+                    date = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+
+            results.append((clean_url, date))
+
+        return results
+
+    def _listing_links_with_dates(
+        self,
+        html: str,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+    ) -> list[tuple[str, Optional[datetime]]]:
+        return self._parse_listing_html(html, domain, link_contains)
+
+    def _get_next_page_url(self, html: str, current_url: str) -> Optional[str]:
+        """Increment ?page=N in the WSJ listing URL."""
+        m = self._WSJ_PAGE_RE.search(current_url)
+        if m:
+            next_page = int(m.group(2)) + 1
+            return self._WSJ_PAGE_RE.sub(rf"\g<1>{next_page}", current_url)
+        # First page may have no page param — append ?page=2
+        sep = "&" if "?" in current_url else "?"
+        return f"{current_url}{sep}page=2"
+
+
+class CNBCScraper(WebScraper):
+    """
+    WebScraper for CNBC section listing pages (e.g. /deals-and-ipos/).
+
+    Article cards: <div class="Card-card ..."> with <a href="/YYYY/MM/DD/slug.html">
+    Date:          <span class="Card-time">Fri, May 8th 2026</span> (ordinal suffix stripped)
+    Pages:         ?page=N (1-indexed)
+    Article dates: article:published_time OG meta tag (UTC ISO 8601)
+    """
+
+    _CNBC_PAGE_RE = re.compile(r'([?&]page=)(\d+)', re.IGNORECASE)
+    _CNBC_ART_RE = re.compile(r'^/\d{4}/\d{2}/\d{2}/')
+    _CNBC_ORD_RE = re.compile(r'(\d+)(st|nd|rd|th)\b', re.IGNORECASE)
+
+    def _parse_cnbc_listing_date(self, text: str) -> Optional[datetime]:
+        """Parse 'Fri, May 8th 2026' from Card-time span into midnight IST."""
+        text = self._CNBC_ORD_RE.sub(r'\1', text).strip()
+        try:
+            return datetime.strptime(text, '%a, %b %d %Y').replace(tzinfo=IST)
+        except ValueError:
+            return None
+
+    def _listing_links_with_dates(
+        self,
+        html: str,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+    ) -> list[tuple[str, Optional[datetime]]]:
+        soup = BeautifulSoup(html, "lxml")
+        seen: set[str] = set()
+        results: list[tuple[str, Optional[datetime]]] = []
+
+        for card in soup.find_all("div", class_=lambda c: c and "Card-card" in c):
+            url: Optional[str] = None
+            for a in card.find_all("a", href=True):
+                href = a["href"].strip()
+                parsed = urlparse(href)
+                if domain not in parsed.netloc:
+                    continue
+                if "/video/" in parsed.path:
+                    continue
+                if not self._CNBC_ART_RE.match(parsed.path):
+                    continue
+                clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                if clean_url not in seen:
+                    url = clean_url
+                    seen.add(clean_url)
+                    break
+
+            if not url:
+                continue
+
+            date: Optional[datetime] = None
+            time_span = card.find("span", class_="Card-time")
+            if time_span:
+                date = self._parse_cnbc_listing_date(time_span.get_text(strip=True))
+
+            if date is None:
+                continue  # skip undated cards — binary search requires all dates present
+
+            results.append((url, date))
+
+        return results
+
+    def _get_next_page_url(self, html: str, current_url: str) -> Optional[str]:
+        """Increment ?page=N in the CNBC listing URL."""
+        m = self._CNBC_PAGE_RE.search(current_url)
+        if m:
+            next_page = int(m.group(2)) + 1
+            return self._CNBC_PAGE_RE.sub(rf"\g<1>{next_page}", current_url)
+        sep = "&" if "?" in current_url else "?"
+        return f"{current_url}{sep}page=2"
+
+    def get_article_links(
+        self,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+        max_articles: int = 20,
+    ) -> list[str]:
+        """Fetch first page and return non-video article URLs."""
+        html = self._fetch_html(source_url)
+        if not html:
+            return []
+        items = self._listing_links_with_dates(html, source_url, domain, link_contains)
+        return [url for url, _ in items[:max_articles]]
+
+
+class FEScraper(WebScraper):
+    """
+    WebScraper for Financial Express listing pages (e.g. /market/).
+
+    WordPress site — article cards are <article> tags.
+    Link:  <h2 class="entry-title"><a href="...">
+    Date:  <time class="entry-date published" datetime="ISO8601">
+    Pages: /market/page/2/, /market/page/3/, ...
+    """
+
+    _FE_PAGE_RE = re.compile(r'/page/(\d+)/$')
+
+    def _listing_links_with_dates(
+        self,
+        html: str,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+    ) -> list[tuple[str, Optional[datetime]]]:
+        soup = BeautifulSoup(html, "lxml")
+        seen: set[str] = set()
+        results: list[tuple[str, Optional[datetime]]] = []
+
+        for article in soup.find_all("article"):
+            # Link from entry-title h2 > a
+            h2 = article.find("h2", class_="entry-title")
+            if not h2:
+                continue
+            a = h2.find("a", href=True)
+            if not a:
+                continue
+            href = a["href"].strip()
+            parsed = urlparse(href)
+            if domain not in parsed.netloc or link_contains not in parsed.path:
+                continue
+            clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            if clean_url in seen:
+                continue
+            seen.add(clean_url)
+
+            # Date from <time class="entry-date published" datetime="...">
+            date: Optional[datetime] = None
+            time_tag = article.find("time", class_="entry-date")
+            if time_tag and time_tag.get("datetime"):
+                try:
+                    date = datetime.fromisoformat(time_tag["datetime"])
+                except ValueError:
+                    pass
+
+            if date is None:
+                continue  # skip undated cards — binary search requires all dates present
+            results.append((clean_url, date))
+
+        return results
+
+    def _get_next_page_url(self, html: str, current_url: str) -> Optional[str]:
+        """
+        /market/       → /market/page/2/
+        /market/page/N/ → /market/page/N+1/
+        """
+        m = self._FE_PAGE_RE.search(current_url)
+        if m:
+            next_page = int(m.group(1)) + 1
+            return self._FE_PAGE_RE.sub(f"/page/{next_page}/", current_url)
+        # First page — no /page/N/ in URL yet
+        base = current_url.rstrip("/")
+        return f"{base}/page/2/"

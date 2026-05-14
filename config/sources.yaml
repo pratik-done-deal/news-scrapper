@@ -12,18 +12,21 @@ sources:
   #   domain: moneycontrol.com
   #   link_contains: /news/business/
 
-  - name: Livemint Companies
-    url: https://www.livemint.com/api/cms/page/v2/listing?url=/companies&page=1
-    domain: livemint.com
-    link_contains: /companies/
-    scraper: livemint
-    paginate: true
-    max_pages: 10     # Livemint listing only exposes ~13 days of articles; page 11+ loops back
+  # - name: Livemint Companies        [paid platform]
+  #   url: https://www.livemint.com/api/cms/page/v2/listing?url=/companies&page=1
+  #   domain: livemint.com
+  #   link_contains: /companies/
+  #   scraper: livemint
+  #   paginate: true
+  #   max_pages: 10
 
-  # - name: Financial Express Companies
-  #   url: https://www.financialexpress.com/market/
-  #   domain: financialexpress.com
-  #   link_contains: /market/
+  - name: Financial Express Market
+    url: https://www.financialexpress.com/market/
+    domain: financialexpress.com
+    link_contains: /market/
+    scraper: fe
+    paginate: true
+    max_pages: 30
 
   # - name: Reuters Business
   #   url: https://www.reuters.com/business/
@@ -40,12 +43,18 @@ sources:
   #   domain: ft.com
   #   link_contains: /content/
 
-  # - name: CNBC Finance
-  #   url: https://www.cnbc.com/finance/
-  #   domain: cnbc.com
-  #   link_contains: /2026/
+  - name: CNBC Deals and IPOs
+    url: https://www.cnbc.com/deals-and-ipos/
+    domain: cnbc.com
+    link_contains: /20
+    scraper: cnbc
+    paginate: true
+    max_pages: 20
 
-  # - name: Wall Street Journal Business
+  # - name: Wall Street Journal Deals  [paid platform]
   #   url: https://www.wsj.com/business/deals?page=1
   #   domain: wsj.com
-  #   link_contains: /articles/
+  #   link_contains: /business/deals/
+  #   scraper: wsj
+  #   paginate: true
+  #   max_pages: 20
