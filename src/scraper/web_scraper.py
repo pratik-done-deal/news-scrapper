@@ -38,6 +38,12 @@ _ET_LISTING_DATE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Matches IIFL listing page date: "23 Oct 2024" + "10:11 AM" (two separate spans in div.xnG0xq)
+_IIFL_LISTING_DATE_RE = re.compile(
+    r'(\d{1,2}\s+\w{3}\s+\d{4})\s*\|?\s*(\d{1,2}:\d{2}\s*[AP]M)',
+    re.IGNORECASE,
+)
+
 
 def _parse_et_article_date(text: str) -> Optional[datetime]:
     """Parse 'Last Updated: Feb 28, 2025, 04:40:00 PM IST' from ET article text."""
@@ -100,6 +106,18 @@ def _parse_lm_listing_date(text: str) -> Optional[datetime]:
                 continue
 
     return None
+
+
+def _parse_iifl_listing_date(text: str) -> Optional[datetime]:
+    """Parse '23 Oct 2024 | 10:11 AM' from IIFL card div.xnG0xq."""
+    m = _IIFL_LISTING_DATE_RE.search(text)
+    if not m:
+        return None
+    raw = f"{m.group(1).strip()} {m.group(2).strip()}"
+    try:
+        return datetime.strptime(raw, '%d %b %Y %I:%M %p').replace(tzinfo=IST)
+    except ValueError:
+        return None
 
 
 class WebScraper(ABC):
@@ -431,6 +449,63 @@ class ETScraper(WebScraper):
             return m.group(1)
 
         return None
+
+
+class IndiaInfolineScraper(WebScraper):
+    """WebScraper implementation for India Infoline topic listing pages."""
+
+    def _listing_links_with_dates(
+        self,
+        html: str,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+    ) -> list[tuple[str, Optional[datetime]]]:
+        """
+        Parse IIFL listing cards (div.Snwhy8) and return (url, date) pairs.
+        Date comes from div.xnG0xq: two spans holding "23 Oct 2024" and "10:11 AM".
+        """
+        soup = BeautifulSoup(html, "lxml")
+        seen: set[str] = set()
+        results: list[tuple[str, Optional[datetime]]] = []
+
+        for card in soup.find_all("div", class_="Snwhy8"):
+            url: Optional[str] = None
+            for a in card.find_all("a", href=True):
+                href = a["href"].strip()
+                full_url = urljoin(source_url, href)
+                parsed = urlparse(full_url)
+                if (
+                    domain in parsed.netloc
+                    and link_contains in parsed.path
+                    and parsed.path not in ("", "/", link_contains)
+                    and not parsed.fragment
+                ):
+                    url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                    break
+
+            if not url or url in seen:
+                continue
+            seen.add(url)
+
+            date: Optional[datetime] = None
+            date_div = card.find("div", class_="xnG0xq")
+            if date_div:
+                date = _parse_iifl_listing_date(date_div.get_text(" "))
+
+            results.append((url, date))
+
+        return results
+
+    def _get_next_page_url(self, html: str, current_url: str) -> Optional[str]:
+        """IIFL pagination pattern: ?page=N"""
+        page_match = re.search(r'([?&]page=)(\d+)', current_url)
+        if page_match:
+            next_page = int(page_match.group(2)) + 1
+            return re.sub(r'([?&]page=)\d+', rf'\g<1>{next_page}', current_url)
+
+        separator = "&" if "?" in current_url else "?"
+        return f"{current_url}{separator}page=2"
 
 
 class LivemintScraper(WebScraper):

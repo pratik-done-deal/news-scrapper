@@ -7,6 +7,14 @@ sources:
     paginate: true      # enables multi-page date-range scraping when --start-date/--end-date are passed
     max_pages: 20       # how many listing pages to walk through
 
+  - name: India Infoline M&A
+    url: https://www.indiainfoline.com/news/mergers-acquisitions
+    domain: indiainfoline.com
+    link_contains: /news/
+    scraper: iifl
+    paginate: true
+    max_pages: 20
+
   # - name: Moneycontrol Business
   #   url: https://www.moneycontrol.com/news/business/
   #   domain: moneycontrol.com

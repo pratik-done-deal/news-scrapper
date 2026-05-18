@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
@@ -40,6 +41,6 @@ class Deal(Base):
     deal_type = Column(Text)
     sub_sector = Column(Text)
     summary = Column(Text)
-    extracted_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    extracted_at = Column(DateTime(timezone=True), default=lambda: datetime.now(tz=ZoneInfo("Asia/Kolkata")))
 
     article = relationship("Article", back_populates="deals")
