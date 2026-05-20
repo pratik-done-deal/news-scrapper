@@ -97,7 +97,23 @@ Output:
   "summary": "Slice, a Bengaluru-based fintech, raised $220 million in a Series B round led by Tiger Global, with Insight Partners and Blume Ventures participating. The capital will support expansion of its credit and lending products into tier-2 and tier-3 Indian cities."
 }}
 
-### Example 4 — Non-Deal News (return all nulls)
+### Example 4 — PE/VC Fund Close (fund raise by a fund manager, no specific investee company)
+Title: Bain Capital raises $10.5 billion for Asia Fund VI
+Content: Bain Capital partners, employees, and related entities committed the balance of capital and collectively are the single largest investor in the fund — which exceeded its original target of $7 billion.
+
+Output:
+{{
+  "buyer": "Bain Capital",
+  "seller": null,
+  "deal_value": "$10.5 billion",
+  "sector": "Others",
+  "sub_sector": null,
+  "country": null,
+  "deal_type": "funding_round",
+  "summary": "Bain Capital has closed its Asia Fund VI at $10.5 billion, exceeding its original $7 billion target. The fund will invest across Technology, Industrials, Consumer, Healthcare, and Business and Financial Services in Asia. No specific investee company has been named yet."
+}}
+
+### Example 5 — Non-Deal News (return all nulls)
 Title: Infosys reports 8% growth in Q3 revenue, beats analyst estimates
 Content: Infosys reported an 8% year-on-year increase in revenue for the third quarter, beating consensus analyst estimates. The company's CEO attributed the growth to strong deal wins in the North American market. Infosys also raised its full-year revenue guidance to 8–10%.
 
