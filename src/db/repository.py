@@ -1,12 +1,16 @@
 import hashlib
 import logging
+from datetime import date, datetime, time
 from typing import Optional
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import and_, create_engine, func, select
 from sqlalchemy.orm import Session
 
 from .models import Article, Base, Deal
+
+IST = ZoneInfo("Asia/Kolkata")
 
 logger = logging.getLogger(__name__)
 
