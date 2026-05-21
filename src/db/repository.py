@@ -8,11 +8,24 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import and_, create_engine, func, select
 from sqlalchemy.orm import Session
 
-from .models import Article, Base, Deal
+from .models import Article, Base, Company, CompanyDeal, Deal
 
 IST = ZoneInfo("Asia/Kolkata")
 
 logger = logging.getLogger(__name__)
+
+
+def _split_names(raw: Optional[str]) -> list[str]:
+    if not raw:
+        return []
+    return [n.strip() for n in raw.split(",") if n.strip()]
+
+
+def _roles_for_deal_type(deal_type: Optional[str]) -> tuple[str, str]:
+    """Return (buyer_role, seller_role) based on deal type."""
+    if deal_type == "funding_round":
+        return "investor", "company"
+    return "buyer", "seller"
 
 
 class NewsRepository:
@@ -66,6 +79,16 @@ class NewsRepository:
                 article.is_ma_relevant = is_relevant
                 session.commit()
 
+    def _get_or_create_company(self, session: Session, name: str) -> Company:
+        company = session.execute(
+            select(Company).where(Company.name == name)
+        ).scalar_one_or_none()
+        if not company:
+            company = Company(name=name)
+            session.add(company)
+            session.flush()
+        return company
+
     def save_deal(
         self,
         article_id: UUID,
@@ -82,18 +105,25 @@ class NewsRepository:
             article = session.get(Article, article_id)
             if article:
                 article.is_processed = True
-            session.add(
-                Deal(
-                    article_id=article_id,
-                    buyer=buyer,
-                    seller=seller,
-                    deal_value=deal_value,
-                    sector=sector,
-                    sub_sector=sub_sector,
-                    country=country,
-                    deal_type=deal_type,
-                    summary=summary,
-                )
+            deal = Deal(
+                article_id=article_id,
+                deal_value=deal_value,
+                sector=sector,
+                sub_sector=sub_sector,
+                country=country,
+                deal_type=deal_type,
+                summary=summary,
             )
+            session.add(deal)
+            session.flush()
+
+            buyer_role, seller_role = _roles_for_deal_type(deal_type)
+            for name in _split_names(buyer):
+                company = self._get_or_create_company(session, name)
+                session.add(CompanyDeal(company_id=company.id, deal_id=deal.id, role=buyer_role))
+            for name in _split_names(seller):
+                company = self._get_or_create_company(session, name)
+                session.add(CompanyDeal(company_id=company.id, deal_id=deal.id, role=seller_role))
+
             session.commit()
         logger.debug(f"Deal saved for article {article_id}")

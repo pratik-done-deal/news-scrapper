@@ -106,8 +106,8 @@ def _process_source_articles(
         if deal:
             repo.save_deal(
                 article_id=article.id,
-                buyer=deal.buyer,
-                seller=deal.seller,
+                buyer=deal.buyer,      # split into company_deals by repo
+                seller=deal.seller,    # split into company_deals by repo
                 deal_value=deal.deal_value,
                 sector=deal.sector,
                 sub_sector=deal.sub_sector,

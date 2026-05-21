@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import Generic, Optional, TypeVar
+from typing import Any, Generic, Optional, TypeVar
 from uuid import UUID
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 T = TypeVar("T")
 
@@ -24,11 +24,24 @@ class ArticleDetailResponse(ArticleResponse):
     content: Optional[str] = None
 
 
+class CompanyInDealResponse(BaseModel):
+    id: UUID
+    name: str
+    role: str
+
+    model_config = {"from_attributes": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def flatten_company_deal(cls, data: Any) -> Any:
+        if hasattr(data, "company"):
+            return {"id": data.company.id, "name": data.company.name, "role": data.role}
+        return data
+
+
 class DealResponse(BaseModel):
     id: UUID
     article_id: UUID
-    buyer: Optional[str] = None
-    seller: Optional[str] = None
     deal_value: Optional[str] = None
     sector: Optional[str] = None
     sub_sector: Optional[str] = None
@@ -36,8 +49,16 @@ class DealResponse(BaseModel):
     deal_type: Optional[str] = None
     summary: Optional[str] = None
     extracted_at: datetime
+    companies: list[CompanyInDealResponse] = []
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_companies(cls, data: Any) -> Any:
+        if hasattr(data, "company_deals"):
+            data.__dict__.setdefault("companies", data.company_deals)
+        return data
 
 
 class PaginatedResponse(BaseModel, Generic[T]):

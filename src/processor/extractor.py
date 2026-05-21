@@ -29,8 +29,8 @@ IMPORTANT RULES:
 
 Extract the following fields and return ONLY valid JSON:
 
-- buyer: Name of the acquiring company or investor (null if not applicable)
-- seller: Name of the company being acquired or asset being sold (null if not applicable)
+- buyer: For acquisitions/mergers — the acquiring company. For funding rounds — the investor(s), comma-separated if multiple. Null if not applicable.
+- seller: For acquisitions/mergers — the company being acquired. For funding rounds — the company receiving the investment. Null if not applicable.
 - deal_value: Monetary value as stated in the article, e.g. "$2.5 billion" (null if not mentioned)
 - sector: Must be exactly one of: {sectors}
 - sub_sector: Only required when sector is "D2C", "Fintech", or "Others".
@@ -88,7 +88,7 @@ Content: Bengaluru-based fintech startup Slice has raised $220 million in a Seri
 Output:
 {{
   "buyer": "Tiger Global Management, Insight Partners, Blume Ventures",
-  "seller": null,
+  "seller": "Slice",
   "deal_value": "$220 million",
   "sector": "Fintech",
   "sub_sector": "Lending/Wealthtech",

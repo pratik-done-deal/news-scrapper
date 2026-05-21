@@ -4,9 +4,9 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import Engine, and_, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from .models import Article, Deal
+from .models import Article, Company, CompanyDeal, Deal
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -70,6 +70,8 @@ def list_deals(
         if deal_type:
             conditions.append(Deal.deal_type.ilike(f"%{deal_type}%"))
 
+        companies_loader = selectinload(Deal.company_deals).selectinload(CompanyDeal.company)
+
         base_q = select(Deal)
         if conditions:
             base_q = base_q.where(and_(*conditions))
@@ -77,7 +79,7 @@ def list_deals(
         total = session.scalar(select(func.count()).select_from(base_q.subquery())) or 0
         items = list(
             session.execute(
-                base_q.order_by(Deal.extracted_at.desc()).offset(offset).limit(limit)
+                base_q.options(companies_loader).order_by(Deal.extracted_at.desc()).offset(offset).limit(limit)
             ).scalars()
         )
         for item in items:
@@ -87,7 +89,11 @@ def list_deals(
 
 def get_deal(engine: Engine, deal_id: UUID) -> Optional[Deal]:
     with Session(engine) as session:
-        deal = session.get(Deal, deal_id)
+        deal = session.execute(
+            select(Deal)
+            .where(Deal.id == deal_id)
+            .options(selectinload(Deal.company_deals).selectinload(CompanyDeal.company))
+        ).scalar_one_or_none()
         if deal:
             session.expunge(deal)
         return deal
