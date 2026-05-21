@@ -65,29 +65,39 @@ _PHRASE_KEYWORDS: list[str] = [
 ]
 
 
-def _text_matches(text: str) -> bool:
-    """Return True if text contains any M&A keyword."""
+def _count_matches(text: str) -> tuple[int, list[str]]:
+    """Return (match_count, matched_terms) for all M&A keywords found in text."""
+    matched: list[str] = []
     for pattern in _WORD_PATTERNS:
-        if pattern.search(text):
-            return True
+        m = pattern.search(text)
+        if m:
+            matched.append(m.group())
     lower = text.lower()
     for phrase in _PHRASE_KEYWORDS:
         if phrase in lower:
-            return True
-    return False
+            matched.append(phrase)
+    return len(matched), matched
 
 
 class NewsFilter:
-    def is_ma_relevant(self, title: Optional[str], content: Optional[str]) -> bool:
-        title_hit = _text_matches(title) if title else False
-        if title_hit:
-            logger.debug("MA match on title")
-            return True
+    # A title is short and specific — one match is enough.
+    # Content is long and can contain incidental mentions, so require at least 2.
+    CONTENT_MIN_MATCHES = 2
 
-        content_hit = _text_matches(content) if content else False
-        if content_hit:
-            logger.debug("MA match on content")
-            return True
+    def is_ma_relevant(self, title: Optional[str], content: Optional[str]) -> bool:
+        if title:
+            count, terms = _count_matches(title)
+            if count >= 1:
+                logger.debug(f"MA match on title: {terms}")
+                return True
+
+        if content:
+            count, terms = _count_matches(content)
+            if count >= self.CONTENT_MIN_MATCHES:
+                logger.debug(f"MA match on content ({count} signals): {terms}")
+                return True
+            if count == 1:
+                logger.debug(f"MA content match ignored (only 1 signal — likely incidental): {terms}")
 
         logger.debug("No MA keywords found — skipping article")
         return False

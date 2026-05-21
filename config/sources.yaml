@@ -3,43 +3,66 @@ sources:
     url: https://economictimes.indiatimes.com/news/company/corporate-trends
     domain: economictimes.indiatimes.com
     link_contains: /news/company/
+    scraper: et
+    paginate: true      # enables multi-page date-range scraping when --start-date/--end-date are passed
+    max_pages: 20       # how many listing pages to walk through
 
-  - name: Moneycontrol Business
-    url: https://www.moneycontrol.com/news/business/
-    domain: moneycontrol.com
-    link_contains: /news/business/
+  - name: India Infoline M&A
+    url: https://www.indiainfoline.com/news/mergers-acquisitions
+    domain: indiainfoline.com
+    link_contains: /news/
+    scraper: iifl
+    paginate: true
+    max_pages: 20
 
-  - name: Livemint Companies
-    url: https://www.livemint.com/companies
-    domain: livemint.com
-    link_contains: /companies/
+  # - name: Moneycontrol Business
+  #   url: https://www.moneycontrol.com/news/business/
+  #   domain: moneycontrol.com
+  #   link_contains: /news/business/
 
-  - name: Financial Express Companies
+  # - name: Livemint Companies        [paid platform]
+  #   url: https://www.livemint.com/api/cms/page/v2/listing?url=/companies&page=1
+  #   domain: livemint.com
+  #   link_contains: /companies/
+  #   scraper: livemint
+  #   paginate: true
+  #   max_pages: 10
+
+  - name: Financial Express Market
     url: https://www.financialexpress.com/market/
     domain: financialexpress.com
     link_contains: /market/
+    scraper: fe
+    paginate: true
+    max_pages: 30
 
-  - name: Reuters Business
-    url: https://www.reuters.com/business/
-    domain: reuters.com
-    link_contains: /business/
+  # - name: Reuters Business
+  #   url: https://www.reuters.com/business/
+  #   domain: reuters.com
+  #   link_contains: /business/
 
-  - name: Bloomberg Asia
-    url: https://www.bloomberg.com/asia
-    domain: bloomberg.com
-    link_contains: /news/articles/
+  # - name: Bloomberg Asia
+  #   url: https://www.bloomberg.com/asia
+  #   domain: bloomberg.com
+  #   link_contains: /news/articles/
 
-  - name: Financial Times
-    url: https://www.ft.com
-    domain: ft.com
-    link_contains: /content/
+  # - name: Financial Times
+  #   url: https://www.ft.com
+  #   domain: ft.com
+  #   link_contains: /content/
 
-  - name: CNBC Finance
-    url: https://www.cnbc.com/finance/
+  - name: CNBC Deals and IPOs
+    url: https://www.cnbc.com/deals-and-ipos/
     domain: cnbc.com
-    link_contains: /2026/
+    link_contains: /20
+    scraper: cnbc
+    paginate: true
+    max_pages: 20
 
-  - name: Wall Street Journal Business
-    url: https://www.wsj.com/business
-    domain: wsj.com
-    link_contains: /articles/
+  # - name: Wall Street Journal Deals  [paid platform]
+  #   url: https://www.wsj.com/business/deals?page=1
+  #   domain: wsj.com
+  #   link_contains: /business/deals/
+  #   scraper: wsj
+  #   paginate: true
+  #   max_pages: 20

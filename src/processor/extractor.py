@@ -22,10 +22,15 @@ SUB_SECTORS = {
 EXTRACTION_PROMPT = """\
 You are an expert financial analyst extracting structured deal information from M&A and business news.
 
+IMPORTANT RULES:
+1. Extract ALL deals — including deals that are only announced, in talks, or pending regulatory approval. A deal does NOT need to be closed/completed to be extracted.
+2. If a deal is announced but not yet closed, still populate all fields and clearly note the pending/announced status in the summary field.
+3. If the article is NOT about a deal (e.g. product launch, earnings report, leadership change with no deal), return all fields as null.
+
 Extract the following fields and return ONLY valid JSON:
 
-- buyer: Name of the acquiring company or investor (null if not applicable)
-- seller: Name of the company being acquired or asset being sold (null if not applicable)
+- buyer: For acquisitions/mergers — the acquiring company. For funding rounds — the investor(s), comma-separated if multiple. Null if not applicable.
+- seller: For acquisitions/mergers — the company being acquired. For funding rounds — the company receiving the investment. Null if not applicable.
 - deal_value: Monetary value as stated in the article, e.g. "$2.5 billion" (null if not mentioned)
 - sector: Must be exactly one of: {sectors}
 - sub_sector: Only required when sector is "D2C", "Fintech", or "Others".
@@ -34,8 +39,99 @@ Extract the following fields and return ONLY valid JSON:
   - If sector is "Others", choose from: {others_sub}
   - For all other sectors, set to null
 - country: Primary country where the deal is happening
-- deal_type: One of — acquisition, merger, joint_venture, funding_round, divestiture, partnership, other
-- summary: A 2–3 sentence natural language summary of the deal written for a business analyst. Include who is involved, what is happening, the deal value if known, and why it matters.
+- deal_type: Classify the deal type using one of — funding, acquisition, merger, joint_venture, divestiture, partnership, other
+  - Use "funding" for any funding round (seed, Series A/B/C, etc.)
+  - Use "acquisition" for any acquisition deal, whether closed or just announced/pending
+  - Use "merger" for mergers, "joint_venture" for JVs, etc.
+- summary: A 2–3 sentence summary for a business analyst. Include who is involved, what is happening, the deal value if known, whether the deal is closed or still pending/announced, and why it matters.
+
+---
+
+EXAMPLES:
+
+### Example 1 — Closed Acquisition
+Title: Tata Sons completes acquisition of Air India for ₹18,000 crore
+Content: Tata Sons has successfully completed the acquisition of Air India from the Government of India for ₹18,000 crore. The deal, which was approved by the Competition Commission of India, marks the return of the airline to its original founders after 69 years of government ownership. Tata Sons plans to merge Air India with Vistara to create a full-service carrier.
+
+Output:
+{{
+  "buyer": "Tata Sons",
+  "seller": "Government of India (Air India)",
+  "deal_value": "₹18,000 crore",
+  "sector": "Others",
+  "sub_sector": "Automobile",
+  "country": "India",
+  "deal_type": "acquisition",
+  "summary": "Tata Sons has completed the acquisition of Air India from the Government of India for ₹18,000 crore, bringing the airline back to its original founders after 69 years. The deal was approved by CCI. Tata Sons intends to merge Air India with Vistara to build a competitive full-service carrier."
+}}
+
+### Example 2 — Announced / Pending Deal (not yet closed)
+Title: Reliance Industries in talks to acquire Mandhana Retail Ventures for ₹900 crore
+Content: Reliance Industries is reportedly in advanced discussions to acquire Mandhana Retail Ventures, the fashion retailer behind the Being Human brand. The deal, valued at approximately ₹900 crore, has not been finalised yet and is subject to due diligence and board approvals. Both parties have declined to comment officially.
+
+Output:
+{{
+  "buyer": "Reliance Industries",
+  "seller": "Mandhana Retail Ventures",
+  "deal_value": "₹900 crore",
+  "sector": "D2C",
+  "sub_sector": "Apparel",
+  "country": "India",
+  "deal_type": "acquisition",
+  "summary": "Reliance Industries is in advanced talks to acquire Mandhana Retail Ventures (Being Human brand) for approximately ₹900 crore, though the deal is not yet closed and remains subject to due diligence and board approvals. This move would strengthen Reliance's position in the fashion retail segment if completed."
+}}
+
+### Example 3 — Funding Round
+Title: Fintech startup Slice raises $220 million in Series B led by Tiger Global
+Content: Bengaluru-based fintech startup Slice has raised $220 million in a Series B funding round led by Tiger Global Management, with participation from Insight Partners and Blume Ventures. The funds will be used to expand its credit card and lending products to tier-2 and tier-3 cities across India.
+
+Output:
+{{
+  "buyer": "Tiger Global Management, Insight Partners, Blume Ventures",
+  "seller": "Slice",
+  "deal_value": "$220 million",
+  "sector": "Fintech",
+  "sub_sector": "Lending/Wealthtech",
+  "country": "India",
+  "deal_type": "funding_round",
+  "summary": "Slice, a Bengaluru-based fintech, raised $220 million in a Series B round led by Tiger Global, with Insight Partners and Blume Ventures participating. The capital will support expansion of its credit and lending products into tier-2 and tier-3 Indian cities."
+}}
+
+### Example 4 — PE/VC Fund Close (fund raise by a fund manager, no specific investee company)
+Title: Bain Capital raises $10.5 billion for Asia Fund VI
+Content: Bain Capital partners, employees, and related entities committed the balance of capital and collectively are the single largest investor in the fund — which exceeded its original target of $7 billion.
+
+Output:
+{{
+  "buyer": "Bain Capital",
+  "seller": null,
+  "deal_value": "$10.5 billion",
+  "sector": "Others",
+  "sub_sector": null,
+  "country": null,
+  "deal_type": "funding_round",
+  "summary": "Bain Capital has closed its Asia Fund VI at $10.5 billion, exceeding its original $7 billion target. The fund will invest across Technology, Industrials, Consumer, Healthcare, and Business and Financial Services in Asia. No specific investee company has been named yet."
+}}
+
+### Example 5 — Non-Deal News (return all nulls)
+Title: Infosys reports 8% growth in Q3 revenue, beats analyst estimates
+Content: Infosys reported an 8% year-on-year increase in revenue for the third quarter, beating consensus analyst estimates. The company's CEO attributed the growth to strong deal wins in the North American market. Infosys also raised its full-year revenue guidance to 8–10%.
+
+Output:
+{{
+  "buyer": null,
+  "seller": null,
+  "deal_value": null,
+  "sector": null,
+  "sub_sector": null,
+  "country": null,
+  "deal_type": null,
+  "summary": null
+}}
+
+---
+
+Now extract from the article below:
 
 Title: {title}
 Content: {content}
