@@ -91,3 +91,23 @@ class ScrapeJobResponse(BaseModel):
     finished_at: Optional[datetime] = None
     result: Optional[dict] = None
     error: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Analytics schemas
+# ---------------------------------------------------------------------------
+
+class DealsBySectorItem(BaseModel):
+    sector: str
+    deal_count: int
+
+
+class TopBuyerItem(BaseModel):
+    company_id: str
+    company_name: str
+    deal_count: int
+
+
+class DealVolumeItem(BaseModel):
+    period: Optional[str]
+    deal_count: int
