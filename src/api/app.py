@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from sqlalchemy import create_engine
 
 from .job_manager import JobManager
-from .routes import articles, deals, scrape
+from .routes import articles, companies, deals, scrape
 
 load_dotenv()
 
@@ -49,6 +49,7 @@ app = FastAPI(
 )
 
 app.include_router(articles.router, prefix="/api/v1")
+app.include_router(companies.router, prefix="/api/v1")
 app.include_router(deals.router, prefix="/api/v1")
 app.include_router(scrape.router, prefix="/api/v1")
 

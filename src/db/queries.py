@@ -97,3 +97,75 @@ def get_deal(engine: Engine, deal_id: UUID) -> Optional[Deal]:
         if deal:
             session.expunge(deal)
         return deal
+
+
+def get_company(engine: Engine, company_id: UUID) -> Optional[Company]:
+    with Session(engine) as session:
+        company = session.get(Company, company_id)
+        if company:
+            session.expunge(company)
+        return company
+
+
+def get_deals_by_company_name(
+    engine: Engine,
+    name: str,
+    offset: int = 0,
+    limit: int = 20,
+) -> tuple[int, list[Deal]]:
+    with Session(engine) as session:
+        base_q = (
+            select(Deal)
+            .join(CompanyDeal, CompanyDeal.deal_id == Deal.id)
+            .join(Company, Company.id == CompanyDeal.company_id)
+            .where(Company.name.ilike(f"%{name}%"))
+            .distinct()
+        )
+
+        total = session.scalar(select(func.count()).select_from(base_q.subquery())) or 0
+        items = list(
+            session.execute(
+                base_q
+                .options(
+                    selectinload(Deal.company_deals).selectinload(CompanyDeal.company),
+                    selectinload(Deal.article),
+                )
+                .order_by(Deal.extracted_at.desc())
+                .offset(offset)
+                .limit(limit)
+            ).scalars()
+        )
+        for item in items:
+            session.expunge(item)
+        return total, items
+
+
+def get_deals_by_company(
+    engine: Engine,
+    company_id: UUID,
+    offset: int = 0,
+    limit: int = 20,
+) -> tuple[int, list[Deal]]:
+    with Session(engine) as session:
+        base_q = (
+            select(Deal)
+            .join(CompanyDeal, CompanyDeal.deal_id == Deal.id)
+            .where(CompanyDeal.company_id == company_id)
+        )
+
+        total = session.scalar(select(func.count()).select_from(base_q.subquery())) or 0
+        items = list(
+            session.execute(
+                base_q
+                .options(
+                    selectinload(Deal.company_deals).selectinload(CompanyDeal.company),
+                    selectinload(Deal.article),
+                )
+                .order_by(Deal.extracted_at.desc())
+                .offset(offset)
+                .limit(limit)
+            ).scalars()
+        )
+        for item in items:
+            session.expunge(item)
+        return total, items

@@ -61,6 +61,10 @@ class DealResponse(BaseModel):
         return data
 
 
+class DealWithArticleResponse(DealResponse):
+    article: Optional[ArticleResponse] = None
+
+
 class PaginatedResponse(BaseModel, Generic[T]):
     total: int
     page: int
