@@ -1,18 +1,26 @@
 import hashlib
 import logging
-from datetime import date, datetime, time
+import uuid
+from datetime import datetime, timezone
 from typing import Optional
-from uuid import UUID
-from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, create_engine, func, select
-from sqlalchemy.orm import Session
+def _company_id(name: str) -> str:
+    """Deterministic UUID5 so the same company name always gets the same ID."""
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, name))
 
-from .models import Article, Base, Company, CompanyDeal, Deal
+from neo4j import GraphDatabase
 
-IST = ZoneInfo("Asia/Kolkata")
+from .models import SCHEMA_CONSTRAINTS, SCHEMA_INDEXES
 
 logger = logging.getLogger(__name__)
+
+# Maps company role → Cypher relationship type
+_ROLE_TO_REL = {
+    "buyer": "BOUGHT",
+    "seller": "SOLD",
+    "investor": "INVESTED_IN",
+    "company": "INVOLVED_IN",
+}
 
 
 def _split_names(raw: Optional[str]) -> list[str]:
@@ -22,31 +30,43 @@ def _split_names(raw: Optional[str]) -> list[str]:
 
 
 def _roles_for_deal_type(deal_type: Optional[str]) -> tuple[str, str]:
-    """Return (buyer_role, seller_role) based on deal type."""
     if deal_type == "funding_round":
         return "investor", "company"
     return "buyer", "seller"
 
 
 class NewsRepository:
-    def __init__(self, database_url: str, pool_size: int = 5, max_overflow: int = 10):
-        self.engine = create_engine(
-            database_url,
-            pool_size=pool_size,
-            max_overflow=max_overflow,
+    def __init__(self, uri: str, user: str, password: str, database: str = "neo4j", pool_size: int = 5):
+        self._driver = GraphDatabase.driver(
+            uri,
+            auth=(user, password),
+            max_connection_pool_size=pool_size,
         )
-        Base.metadata.create_all(self.engine)
+        self._database = database
+        self._init_schema()
+
+    def _session(self):
+        return self._driver.session(database=self._database)
+
+    def _init_schema(self) -> None:
+        with self._session() as session:
+            for stmt in SCHEMA_CONSTRAINTS + SCHEMA_INDEXES:
+                session.run(stmt)
+
+    def close(self) -> None:
+        self._driver.close()
 
     def _hash_url(self, url: str) -> str:
         return hashlib.sha256(url.encode()).hexdigest()
 
     def url_exists(self, url: str) -> bool:
         url_hash = self._hash_url(url)
-        with Session(self.engine) as session:
-            result = session.execute(
-                select(Article.id).where(Article.url_hash == url_hash)
-            ).first()
-            return result is not None
+        with self._session() as session:
+            result = session.run(
+                "MATCH (a:Article {url_hash: $url_hash}) RETURN a.id LIMIT 1",
+                url_hash=url_hash,
+            )
+            return result.single() is not None
 
     def save_article(
         self,
@@ -55,43 +75,56 @@ class NewsRepository:
         title: Optional[str],
         content: Optional[str],
         published_at=None,
-    ) -> Article:
-        article = Article(
-            url=url,
-            url_hash=self._hash_url(url),
-            source=source,
-            title=title,
-            content=content,
-            published_at=published_at,
-        )
-        with Session(self.engine) as session:
-            session.add(article)
-            session.commit()
-            session.refresh(article)
-            # detach from session so it can be used outside
-            session.expunge(article)
-        return article
+    ):
+        article_id = str(uuid.uuid4())
+        scraped_at = datetime.now(timezone.utc).isoformat()
+        published_at_iso = published_at.isoformat() if published_at else None
 
-    def mark_ma_relevant(self, article_id: UUID, is_relevant: bool) -> None:
-        with Session(self.engine) as session:
-            article = session.get(Article, article_id)
-            if article:
-                article.is_ma_relevant = is_relevant
-                session.commit()
+        with self._session() as session:
+            session.run(
+                """
+                CREATE (a:Article {
+                    id:           $id,
+                    url:          $url,
+                    url_hash:     $url_hash,
+                    source:       $source,
+                    title:        $title,
+                    content:      $content,
+                    scraped_at:   $scraped_at,
+                    published_at: $published_at,
+                    is_ma_relevant: null,
+                    is_processed: false
+                })
+                """,
+                id=article_id,
+                url=url,
+                url_hash=self._hash_url(url),
+                source=source,
+                title=title,
+                content=content,
+                scraped_at=scraped_at,
+                published_at=published_at_iso,
+            )
 
-    def _get_or_create_company(self, session: Session, name: str) -> Company:
-        company = session.execute(
-            select(Company).where(Company.name == name)
-        ).scalar_one_or_none()
-        if not company:
-            company = Company(name=name)
-            session.add(company)
-            session.flush()
-        return company
+        # Return a simple namespace so callers can access .id the same way as before
+        class _ArticleRef:
+            pass
+
+        ref = _ArticleRef()
+        ref.id = article_id
+        return ref
+
+    def mark_ma_relevant(self, article_id, is_relevant: bool) -> None:
+        with self._session() as session:
+            session.run(
+                "MATCH (a:Article {id: $id}) SET a.is_ma_relevant = $rel",
+                id=str(article_id),
+                rel=is_relevant,
+            )
 
     def save_deal(
         self,
-        article_id: UUID,
+        article_id,
         buyer: Optional[str],
         seller: Optional[str],
         deal_value: Optional[str],
@@ -101,29 +134,69 @@ class NewsRepository:
         deal_type: Optional[str],
         summary: Optional[str],
     ) -> None:
-        with Session(self.engine) as session:
-            article = session.get(Article, article_id)
-            if article:
-                article.is_processed = True
-            deal = Deal(
-                article_id=article_id,
+        deal_id = str(uuid.uuid4())
+        extracted_at = datetime.now(timezone.utc).isoformat()
+        buyer_role, seller_role = _roles_for_deal_type(deal_type)
+
+        with self._session() as session:
+            # Mark article processed and create the Deal node linked to the Article
+            session.run(
+                """
+                MATCH (a:Article {id: $article_id})
+                SET a.is_processed = true
+                CREATE (d:Deal {
+                    id:           $deal_id,
+                    deal_value:   $deal_value,
+                    sector:       $sector,
+                    sub_sector:   $sub_sector,
+                    country:      $country,
+                    deal_type:    $deal_type,
+                    summary:      $summary,
+                    extracted_at: $extracted_at
+                })
+                CREATE (a)-[:HAS_DEAL]->(d)
+                """,
+                article_id=str(article_id),
+                deal_id=deal_id,
                 deal_value=deal_value,
                 sector=sector,
                 sub_sector=sub_sector,
                 country=country,
                 deal_type=deal_type,
                 summary=summary,
+                extracted_at=extracted_at,
             )
-            session.add(deal)
-            session.flush()
 
-            buyer_role, seller_role = _roles_for_deal_type(deal_type)
+            # Create Company nodes and relationships for buyers
+            buyer_rel = _ROLE_TO_REL[buyer_role]
             for name in _split_names(buyer):
-                company = self._get_or_create_company(session, name)
-                session.add(CompanyDeal(company_id=company.id, deal_id=deal.id, role=buyer_role))
-            for name in _split_names(seller):
-                company = self._get_or_create_company(session, name)
-                session.add(CompanyDeal(company_id=company.id, deal_id=deal.id, role=seller_role))
+                session.run(
+                    f"""
+                    MERGE (c:Company {{name: $name}})
+                    ON CREATE SET c.id = $company_id
+                    WITH c
+                    MATCH (d:Deal {{id: $deal_id}})
+                    CREATE (c)-[:{buyer_rel}]->(d)
+                    """,
+                    name=name,
+                    company_id=_company_id(name),
+                    deal_id=deal_id,
+                )
 
-            session.commit()
+            # Create Company nodes and relationships for sellers
+            seller_rel = _ROLE_TO_REL[seller_role]
+            for name in _split_names(seller):
+                session.run(
+                    f"""
+                    MERGE (c:Company {{name: $name}})
+                    ON CREATE SET c.id = $company_id
+                    WITH c
+                    MATCH (d:Deal {{id: $deal_id}})
+                    CREATE (c)-[:{seller_rel}]->(d)
+                    """,
+                    name=name,
+                    company_id=_company_id(name),
+                    deal_id=deal_id,
+                )
+
         logger.debug(f"Deal saved for article {article_id}")

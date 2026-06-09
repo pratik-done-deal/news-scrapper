@@ -5,19 +5,24 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from sqlalchemy import create_engine
+from neo4j import GraphDatabase
 
 from .job_manager import JobManager
 from .routes import analytics, articles, companies, deals, scrape
+from ..db.queries import Neo4jConnection
 
 load_dotenv()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        raise EnvironmentError("DATABASE_URL is not set")
+    neo4j_uri = os.environ.get("NEO4J_URI", "neo4j://127.0.0.1:7687")
+    neo4j_user = os.environ.get("NEO4J_USER", "neo4j")
+    neo4j_password = os.environ.get("NEO4J_PASSWORD")
+    neo4j_database = os.environ.get("NEO4J_DATABASE", "neo4j")
+
+    if not neo4j_password:
+        raise EnvironmentError("NEO4J_PASSWORD is not set")
 
     with open("config/settings.yaml") as f:
         settings = yaml.safe_load(f)
@@ -25,11 +30,12 @@ async def lifespan(app: FastAPI):
         sources_config = yaml.safe_load(f)
 
     db_cfg = settings.get("database", {})
-    app.state.engine = create_engine(
-        database_url,
-        pool_size=db_cfg.get("pool_size", 5),
-        max_overflow=db_cfg.get("max_overflow", 10),
+    driver = GraphDatabase.driver(
+        neo4j_uri,
+        auth=(neo4j_user, neo4j_password),
+        max_connection_pool_size=db_cfg.get("pool_size", 5),
     )
+    app.state.conn = Neo4jConnection(driver, neo4j_database)
     app.state.settings = settings
     app.state.sources_config = sources_config
     app.state.job_manager = JobManager()
@@ -38,7 +44,7 @@ async def lifespan(app: FastAPI):
     yield
 
     app.state.executor.shutdown(wait=False)
-    app.state.engine.dispose()
+    app.state.conn.driver.close()
 
 
 app = FastAPI(

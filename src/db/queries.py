@@ -1,247 +1,327 @@
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 from typing import Literal, Optional
 from uuid import UUID
-from zoneinfo import ZoneInfo
 
-from sqlalchemy import Engine, and_, func, select, text
-from sqlalchemy.orm import Session, selectinload
+from neo4j import Driver
 
-from .models import Article, Company, CompanyDeal, Deal
 
-IST = ZoneInfo("Asia/Kolkata")
+class Neo4jConnection:
+    """Pairs a Driver with a target database name, mirroring the Engine pattern."""
 
+    def __init__(self, driver: Driver, database: str) -> None:
+        self.driver = driver
+        self.database = database
+
+    def session(self):
+        return self.driver.session(database=self.database)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _deal_row(record) -> dict:
+    deal = dict(record["d"])
+    deal["article_id"] = record["article_id"]
+    deal["companies"] = [
+        {"id": c["id"], "name": c["name"], "role": c["role"]}
+        for c in record["companies"]
+        if c.get("id") is not None
+    ]
+    return deal
+
+
+def _deal_row_with_article(record) -> dict:
+    deal = _deal_row(record)
+    art = record.get("article")
+    deal["article"] = dict(art) if art else None
+    return deal
+
+
+# ---------------------------------------------------------------------------
+# Article queries
+# ---------------------------------------------------------------------------
 
 def list_articles(
-    engine: Engine,
+    conn: Neo4jConnection,
     source: Optional[str] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     is_ma_relevant: Optional[bool] = None,
     offset: int = 0,
     limit: int = 20,
-) -> tuple[int, list[Article]]:
-    with Session(engine) as session:
-        conditions = []
-        if source:
-            conditions.append(Article.source == source)
-        if date_from:
-            dt_from = datetime.combine(date_from, time.min).replace(tzinfo=IST)
-            conditions.append(Article.published_at >= dt_from)
-        if date_to:
-            dt_to = datetime.combine(date_to, time(23, 59, 59)).replace(tzinfo=IST)
-            conditions.append(Article.published_at <= dt_to)
-        if is_ma_relevant is not None:
-            conditions.append(Article.is_ma_relevant == is_ma_relevant)
+) -> tuple[int, list[dict]]:
+    conditions = []
+    params: dict = {}
 
-        base_q = select(Article)
-        if conditions:
-            base_q = base_q.where(and_(*conditions))
+    if source:
+        conditions.append("a.source = $source")
+        params["source"] = source
+    if date_from:
+        params["date_from"] = datetime.combine(date_from, time.min).replace(tzinfo=timezone.utc).isoformat()
+        conditions.append("a.published_at >= $date_from")
+    if date_to:
+        params["date_to"] = datetime.combine(date_to, time(23, 59, 59)).replace(tzinfo=timezone.utc).isoformat()
+        conditions.append("a.published_at <= $date_to")
+    if is_ma_relevant is not None:
+        conditions.append("a.is_ma_relevant = $is_ma_relevant")
+        params["is_ma_relevant"] = is_ma_relevant
 
-        total = session.scalar(select(func.count()).select_from(base_q.subquery())) or 0
-        items = list(
-            session.execute(
-                base_q.order_by(Article.published_at.desc().nullslast()).offset(offset).limit(limit)
-            ).scalars()
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    with conn.session() as session:
+        total = session.run(
+            f"MATCH (a:Article) {where} RETURN count(a) AS total", **params
+        ).single()["total"]
+
+        result = session.run(
+            f"""
+            MATCH (a:Article)
+            {where}
+            RETURN a
+            ORDER BY a.published_at DESC
+            SKIP $offset LIMIT $limit
+            """,
+            **params,
+            offset=offset,
+            limit=limit,
         )
-        for item in items:
-            session.expunge(item)
-        return total, items
+        items = [dict(record["a"]) for record in result]
+
+    return total, items
 
 
-def get_article(engine: Engine, article_id: UUID) -> Optional[Article]:
-    with Session(engine) as session:
-        article = session.get(Article, article_id)
-        if article:
-            session.expunge(article)
-        return article
+def get_article(conn: Neo4jConnection, article_id: UUID) -> Optional[dict]:
+    with conn.session() as session:
+        record = session.run(
+            "MATCH (a:Article {id: $id}) RETURN a", id=str(article_id)
+        ).single()
+        return dict(record["a"]) if record else None
 
+
+# ---------------------------------------------------------------------------
+# Deal queries
+# ---------------------------------------------------------------------------
 
 def list_deals(
-    engine: Engine,
+    conn: Neo4jConnection,
     sector: Optional[str] = None,
     deal_type: Optional[str] = None,
     offset: int = 0,
     limit: int = 20,
-) -> tuple[int, list[Deal]]:
-    with Session(engine) as session:
-        conditions = []
-        if sector:
-            conditions.append(Deal.sector.ilike(f"%{sector}%"))
-        if deal_type:
-            conditions.append(Deal.deal_type.ilike(f"%{deal_type}%"))
+) -> tuple[int, list[dict]]:
+    conditions = []
+    params: dict = {}
 
-        companies_loader = selectinload(Deal.company_deals).selectinload(CompanyDeal.company)
+    if sector:
+        conditions.append("toLower(d.sector) CONTAINS toLower($sector)")
+        params["sector"] = sector
+    if deal_type:
+        conditions.append("toLower(d.deal_type) CONTAINS toLower($deal_type)")
+        params["deal_type"] = deal_type
 
-        base_q = select(Deal)
-        if conditions:
-            base_q = base_q.where(and_(*conditions))
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
-        total = session.scalar(select(func.count()).select_from(base_q.subquery())) or 0
-        items = list(
-            session.execute(
-                base_q.options(companies_loader).order_by(Deal.extracted_at.desc()).offset(offset).limit(limit)
-            ).scalars()
+    with conn.session() as session:
+        total = session.run(
+            f"MATCH (d:Deal) {where} RETURN count(d) AS total", **params
+        ).single()["total"]
+
+        result = session.run(
+            f"""
+            MATCH (art:Article)-[:HAS_DEAL]->(d:Deal)
+            {where}
+            WITH d, art.id AS article_id
+            ORDER BY d.extracted_at DESC
+            SKIP $offset LIMIT $limit
+            OPTIONAL MATCH (c:Company)-[r]->(d)
+            RETURN d, article_id,
+                   collect(CASE WHEN c IS NOT NULL
+                           THEN {{id: c.id, name: c.name, role: type(r)}}
+                           END) AS companies
+            """,
+            **params,
+            offset=offset,
+            limit=limit,
         )
-        for item in items:
-            session.expunge(item)
-        return total, items
+        items = [_deal_row(record) for record in result]
+
+    return total, items
 
 
-def get_deal(engine: Engine, deal_id: UUID) -> Optional[Deal]:
-    with Session(engine) as session:
-        deal = session.execute(
-            select(Deal)
-            .where(Deal.id == deal_id)
-            .options(selectinload(Deal.company_deals).selectinload(CompanyDeal.company))
-        ).scalar_one_or_none()
-        if deal:
-            session.expunge(deal)
-        return deal
+def get_deal(conn: Neo4jConnection, deal_id: UUID) -> Optional[dict]:
+    with conn.session() as session:
+        record = session.run(
+            """
+            MATCH (art:Article)-[:HAS_DEAL]->(d:Deal {id: $id})
+            OPTIONAL MATCH (c:Company)-[r]->(d)
+            RETURN d, art.id AS article_id,
+                   collect(CASE WHEN c IS NOT NULL
+                           THEN {id: c.id, name: c.name, role: type(r)}
+                           END) AS companies
+            """,
+            id=str(deal_id),
+        ).single()
+        return _deal_row(record) if record else None
 
 
-def get_company(engine: Engine, company_id: UUID) -> Optional[Company]:
-    with Session(engine) as session:
-        company = session.get(Company, company_id)
-        if company:
-            session.expunge(company)
-        return company
+def get_company(conn: Neo4jConnection, company_id: UUID) -> Optional[dict]:
+    with conn.session() as session:
+        record = session.run(
+            "MATCH (c:Company {id: $id}) RETURN c", id=str(company_id)
+        ).single()
+        return dict(record["c"]) if record else None
 
 
 def get_deals_by_company_name(
-    engine: Engine,
+    conn: Neo4jConnection,
     name: str,
     offset: int = 0,
     limit: int = 20,
-) -> tuple[int, list[Deal]]:
-    with Session(engine) as session:
-        base_q = (
-            select(Deal)
-            .join(CompanyDeal, CompanyDeal.deal_id == Deal.id)
-            .join(Company, Company.id == CompanyDeal.company_id)
-            .where(Company.name.ilike(f"%{name}%"))
-            .distinct()
-        )
+) -> tuple[int, list[dict]]:
+    with conn.session() as session:
+        total = session.run(
+            """
+            MATCH (c:Company)-[]->(d:Deal)
+            WHERE toLower(c.name) CONTAINS toLower($name)
+            RETURN count(DISTINCT d) AS total
+            """,
+            name=name,
+        ).single()["total"]
 
-        total = session.scalar(select(func.count()).select_from(base_q.subquery())) or 0
-        items = list(
-            session.execute(
-                base_q
-                .options(
-                    selectinload(Deal.company_deals).selectinload(CompanyDeal.company),
-                    selectinload(Deal.article),
-                )
-                .order_by(Deal.extracted_at.desc())
-                .offset(offset)
-                .limit(limit)
-            ).scalars()
+        result = session.run(
+            """
+            MATCH (c:Company)-[]->(d:Deal)<-[:HAS_DEAL]-(art:Article)
+            WHERE toLower(c.name) CONTAINS toLower($name)
+            WITH DISTINCT d, art
+            ORDER BY d.extracted_at DESC
+            SKIP $offset LIMIT $limit
+            OPTIONAL MATCH (co:Company)-[r]->(d)
+            RETURN d, art.id AS article_id, art AS article,
+                   collect(CASE WHEN co IS NOT NULL
+                           THEN {id: co.id, name: co.name, role: type(r)}
+                           END) AS companies
+            """,
+            name=name,
+            offset=offset,
+            limit=limit,
         )
-        for item in items:
-            session.expunge(item)
-        return total, items
+        items = [_deal_row_with_article(record) for record in result]
+
+    return total, items
 
 
 def get_deals_by_company(
-    engine: Engine,
+    conn: Neo4jConnection,
     company_id: UUID,
     offset: int = 0,
     limit: int = 20,
-) -> tuple[int, list[Deal]]:
-    with Session(engine) as session:
-        base_q = (
-            select(Deal)
-            .join(CompanyDeal, CompanyDeal.deal_id == Deal.id)
-            .where(CompanyDeal.company_id == company_id)
-        )
+) -> tuple[int, list[dict]]:
+    with conn.session() as session:
+        total = session.run(
+            """
+            MATCH (c:Company {id: $company_id})-[]->(d:Deal)
+            RETURN count(d) AS total
+            """,
+            company_id=str(company_id),
+        ).single()["total"]
 
-        total = session.scalar(select(func.count()).select_from(base_q.subquery())) or 0
-        items = list(
-            session.execute(
-                base_q
-                .options(
-                    selectinload(Deal.company_deals).selectinload(CompanyDeal.company),
-                    selectinload(Deal.article),
-                )
-                .order_by(Deal.extracted_at.desc())
-                .offset(offset)
-                .limit(limit)
-            ).scalars()
+        result = session.run(
+            """
+            MATCH (c:Company {id: $company_id})-[]->(d:Deal)<-[:HAS_DEAL]-(art:Article)
+            WITH d, art
+            ORDER BY d.extracted_at DESC
+            SKIP $offset LIMIT $limit
+            OPTIONAL MATCH (co:Company)-[r]->(d)
+            RETURN d, art.id AS article_id, art AS article,
+                   collect(CASE WHEN co IS NOT NULL
+                           THEN {id: co.id, name: co.name, role: type(r)}
+                           END) AS companies
+            """,
+            company_id=str(company_id),
+            offset=offset,
+            limit=limit,
         )
-        for item in items:
-            session.expunge(item)
-        return total, items
+        items = [_deal_row_with_article(record) for record in result]
+
+    return total, items
 
 
 # ---------------------------------------------------------------------------
 # Analytics queries
 # ---------------------------------------------------------------------------
 
-def analytics_deals_by_sector(engine: Engine) -> list[dict]:
-    """Return deal count broken down by sector, sorted by count descending."""
-    with Session(engine) as session:
-        rows = session.execute(
-            select(
-                Deal.sector,
-                func.count(Deal.id).label("deal_count"),
-            )
-            .where(Deal.sector.isnot(None))
-            .group_by(Deal.sector)
-            .order_by(func.count(Deal.id).desc())
-        ).all()
-        return [{"sector": r.sector, "deal_count": r.deal_count} for r in rows]
+def analytics_deals_by_sector(conn: Neo4jConnection) -> list[dict]:
+    with conn.session() as session:
+        result = session.run(
+            """
+            MATCH (d:Deal)
+            WHERE d.sector IS NOT NULL
+            RETURN d.sector AS sector, count(d) AS deal_count
+            ORDER BY deal_count DESC
+            """
+        )
+        return [{"sector": r["sector"], "deal_count": r["deal_count"]} for r in result]
 
 
 def analytics_top_buyers(
-    engine: Engine,
+    conn: Neo4jConnection,
     role: str = "buyer",
     limit: int = 10,
 ) -> list[dict]:
-    """Return companies most frequently appearing as buyer (or investor) in deals."""
-    with Session(engine) as session:
-        rows = session.execute(
-            select(
-                Company.id,
-                Company.name,
-                func.count(CompanyDeal.id).label("deal_count"),
-            )
-            .join(CompanyDeal, CompanyDeal.company_id == Company.id)
-            .where(CompanyDeal.role == role)
-            .group_by(Company.id, Company.name)
-            .order_by(func.count(CompanyDeal.id).desc())
-            .limit(limit)
-        ).all()
+    rel_map = {
+        "buyer": "BOUGHT",
+        "seller": "SOLD",
+        "investor": "INVESTED_IN",
+        "company": "INVOLVED_IN",
+    }
+    rel_type = rel_map.get(role, "BOUGHT")
+
+    with conn.session() as session:
+        result = session.run(
+            f"""
+            MATCH (c:Company)-[:{rel_type}]->(d:Deal)
+            RETURN c.id AS company_id, c.name AS company_name, count(d) AS deal_count
+            ORDER BY deal_count DESC
+            LIMIT $limit
+            """,
+            limit=limit,
+        )
         return [
-            {"company_id": str(r.id), "company_name": r.name, "deal_count": r.deal_count}
-            for r in rows
+            {"company_id": r["company_id"], "company_name": r["company_name"], "deal_count": r["deal_count"]}
+            for r in result
         ]
 
 
 def analytics_deal_volume(
-    engine: Engine,
+    conn: Neo4jConnection,
     group_by: Literal["day", "month", "year"] = "month",
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
 ) -> list[dict]:
-    """Return deal count per time bucket (day / month / year)."""
-    trunc_map = {"day": "day", "month": "month", "year": "year"}
-    trunc = trunc_map[group_by]
+    # ISO string prefix lengths: day=10 (2024-01-15), month=7 (2024-01), year=4 (2024)
+    trunc_len = {"day": 10, "month": 7, "year": 4}[group_by]
 
-    with Session(engine) as session:
-        period_col = func.date_trunc(trunc, Article.published_at).label("period")
-        q = (
-            select(period_col, func.count(Deal.id).label("deal_count"))
-            .join(Article, Deal.article_id == Article.id)
-            .where(Article.published_at.isnot(None))
+    conditions = ["a.published_at IS NOT NULL"]
+    params: dict = {"trunc_len": trunc_len}
+
+    if date_from:
+        params["date_from"] = datetime.combine(date_from, time.min).replace(tzinfo=timezone.utc).isoformat()
+        conditions.append("a.published_at >= $date_from")
+    if date_to:
+        params["date_to"] = datetime.combine(date_to, time(23, 59, 59)).replace(tzinfo=timezone.utc).isoformat()
+        conditions.append("a.published_at <= $date_to")
+
+    where = "WHERE " + " AND ".join(conditions)
+
+    with conn.session() as session:
+        result = session.run(
+            f"""
+            MATCH (a:Article)-[:HAS_DEAL]->(d:Deal)
+            {where}
+            RETURN substring(a.published_at, 0, $trunc_len) AS period, count(d) AS deal_count
+            ORDER BY period ASC
+            """,
+            **params,
         )
-        if date_from:
-            dt_from = datetime.combine(date_from, time.min).replace(tzinfo=IST)
-            q = q.where(Article.published_at >= dt_from)
-        if date_to:
-            dt_to = datetime.combine(date_to, time(23, 59, 59)).replace(tzinfo=IST)
-            q = q.where(Article.published_at <= dt_to)
-
-        q = q.group_by(text("1")).order_by(text("1"))
-        rows = session.execute(q).all()
-        return [
-            {"period": r.period.date().isoformat() if r.period else None, "deal_count": r.deal_count}
-            for r in rows
-        ]
+        return [{"period": r["period"], "deal_count": r["deal_count"]} for r in result]

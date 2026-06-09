@@ -2,11 +2,11 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Engine
 
-from ..dependencies import get_engine
+from ..dependencies import get_connection
 from ..schemas import DealResponse, PaginatedResponse
 from ...db import queries
+from ...db.queries import Neo4jConnection
 
 router = APIRouter(prefix="/deals", tags=["deals"])
 
@@ -17,11 +17,11 @@ def list_deals(
     deal_type: Optional[str] = Query(None, description="Filter by deal type (partial match)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    engine: Engine = Depends(get_engine),
+    conn: Neo4jConnection = Depends(get_connection),
 ):
     offset = (page - 1) * page_size
     total, items = queries.list_deals(
-        engine,
+        conn,
         sector=sector,
         deal_type=deal_type,
         offset=offset,
@@ -31,8 +31,8 @@ def list_deals(
 
 
 @router.get("/{deal_id}", response_model=DealResponse)
-def get_deal(deal_id: UUID, engine: Engine = Depends(get_engine)):
-    deal = queries.get_deal(engine, deal_id)
+def get_deal(deal_id: UUID, conn: Neo4jConnection = Depends(get_connection)):
+    deal = queries.get_deal(conn, deal_id)
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
     return deal

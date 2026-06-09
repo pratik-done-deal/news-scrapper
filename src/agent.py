@@ -132,11 +132,13 @@ def _process_source_articles(
 def _processing_worker(
     job_queue: Queue,
     result_queue: Queue,
-    database_url: str,
+    neo4j_uri: str,
+    neo4j_user: str,
+    neo4j_password: str,
+    neo4j_database: str,
     groq_api_key: str,
     groq_model: str,
     db_pool_size: int,
-    db_max_overflow: int,
 ) -> None:
     """Dedicated process that consumes scraped source batches and processes articles."""
     _ensure_worker_logging()
@@ -146,9 +148,11 @@ def _processing_worker(
     try:
         groq_client = Groq(api_key=groq_api_key)
         repo = NewsRepository(
-            database_url,
+            uri=neo4j_uri,
+            user=neo4j_user,
+            password=neo4j_password,
+            database=neo4j_database,
             pool_size=db_pool_size,
-            max_overflow=db_max_overflow,
         )
         news_filter = NewsFilter()
         extractor = DealExtractor(groq_client, groq_model)
@@ -195,25 +199,37 @@ def _processing_worker(
 
 
 class NewsAgent:
-    def __init__(self, settings: dict, database_url: str, groq_api_key: str):
+    def __init__(
+        self,
+        settings: dict,
+        neo4j_uri: str,
+        neo4j_user: str,
+        neo4j_password: str,
+        neo4j_database: str,
+        groq_api_key: str,
+    ):
         model = settings["groq"]["model"]
         scraping = settings["scraping"]
         db_cfg = settings.get("database", {})
 
-        self.database_url = database_url
+        self.neo4j_uri = neo4j_uri
+        self.neo4j_user = neo4j_user
+        self.neo4j_password = neo4j_password
+        self.neo4j_database = neo4j_database
         self.groq_api_key = groq_api_key
         self.groq_model = model
         self.db_pool_size = db_cfg.get("pool_size", 5)
-        self.db_max_overflow = db_cfg.get("max_overflow", 10)
         self._scraper_kwargs = {
             "request_timeout": scraping["request_timeout"],
             "delay": scraping["delay_between_requests"],
         }
         self._scrapers: dict[str, WebScraper] = {}
         self.repo = NewsRepository(
-            database_url,
+            uri=neo4j_uri,
+            user=neo4j_user,
+            password=neo4j_password,
+            database=neo4j_database,
             pool_size=self.db_pool_size,
-            max_overflow=self.db_max_overflow,
         )
         self.max_articles = scraping["max_articles_per_source"]
 
@@ -437,11 +453,13 @@ class NewsAgent:
             args=(
                 job_queue,
                 result_queue,
-                self.database_url,
+                self.neo4j_uri,
+                self.neo4j_user,
+                self.neo4j_password,
+                self.neo4j_database,
                 self.groq_api_key,
                 self.groq_model,
                 self.db_pool_size,
-                self.db_max_overflow,
             ),
         )
 
