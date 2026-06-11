@@ -92,13 +92,13 @@ def _process_source_articles(
         )
         new += 1
 
-        relevant = news_filter.is_ma_relevant(title, content)
-        repo.mark_ma_relevant(article.id, relevant)
+        relevant = news_filter.is_ma_funding_relevant(title, content)
+        repo.mark_ma_funding_relevant(article.id, relevant)
 
         if not relevant:
             logger.info(
                 f"  [{CONSUMER_LABEL}|{source_name}|{process}]"
-                " Not M&A relevant — skipping extraction"
+                " Not M&A or funding relevant — skipping extraction"
             )
             continue
 

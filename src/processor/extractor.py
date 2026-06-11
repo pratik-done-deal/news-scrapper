@@ -39,8 +39,8 @@ Extract the following fields and return ONLY valid JSON:
   - If sector is "Others", choose from: {others_sub}
   - For all other sectors, set to null
 - country: Primary country where the deal is happening
-- deal_type: Classify the deal type using one of — funding, acquisition, merger, joint_venture, divestiture, partnership, other
-  - Use "funding" for any funding round (seed, Series A/B/C, etc.)
+- deal_type: Classify the deal type using one of — funding_round, acquisition, merger, joint_venture, divestiture, partnership, other
+  - Use "funding_round" for any funding round (seed, Series A/B/C, etc.)
   - Use "acquisition" for any acquisition deal, whether closed or just announced/pending
   - Use "merger" for mergers, "joint_venture" for JVs, etc.
 - summary: A 2–3 sentence summary for a business analyst. Include who is involved, what is happening, the deal value if known, whether the deal is closed or still pending/announced, and why it matters.
@@ -175,11 +175,14 @@ class DealData(BaseModel):
     def normalise_deal_type(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return v
+        normalised = v.lower()
+        if normalised == "funding":
+            return "funding_round"
         allowed = {
             "acquisition", "merger", "joint_venture",
             "funding_round", "divestiture", "partnership", "other",
         }
-        return v.lower() if v.lower() in allowed else "other"
+        return normalised if normalised in allowed else "other"
 
 
 class DealExtractor:

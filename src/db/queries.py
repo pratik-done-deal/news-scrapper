@@ -47,7 +47,7 @@ def list_articles(
     source: Optional[str] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
-    is_ma_relevant: Optional[bool] = None,
+    is_ma_funding_relevant: Optional[bool] = None,
     offset: int = 0,
     limit: int = 20,
 ) -> tuple[int, list[dict]]:
@@ -63,9 +63,9 @@ def list_articles(
     if date_to:
         params["date_to"] = datetime.combine(date_to, time(23, 59, 59)).replace(tzinfo=timezone.utc).isoformat()
         conditions.append("a.published_at <= $date_to")
-    if is_ma_relevant is not None:
-        conditions.append("a.is_ma_relevant = $is_ma_relevant")
-        params["is_ma_relevant"] = is_ma_relevant
+    if is_ma_funding_relevant is not None:
+        conditions.append("a.is_ma_funding_relevant = $is_ma_funding_relevant")
+        params["is_ma_funding_relevant"] = is_ma_funding_relevant
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 

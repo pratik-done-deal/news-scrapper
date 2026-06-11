@@ -14,7 +14,7 @@ class ArticleResponse(BaseModel):
     title: Optional[str] = None
     scraped_at: datetime
     published_at: Optional[datetime] = None
-    is_ma_relevant: Optional[bool] = None
+    is_ma_funding_relevant: Optional[bool] = None
     is_processed: bool
 
     model_config = {"from_attributes": True}

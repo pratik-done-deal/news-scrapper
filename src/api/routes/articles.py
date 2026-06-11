@@ -17,7 +17,7 @@ def list_articles(
     source: Optional[str] = Query(None, description="Filter by source name"),
     date_from: Optional[date] = Query(None, description="Published on or after (YYYY-MM-DD)"),
     date_to: Optional[date] = Query(None, description="Published on or before (YYYY-MM-DD)"),
-    is_ma_relevant: Optional[bool] = Query(None, description="Filter by M&A relevance"),
+    is_ma_funding_relevant: Optional[bool] = Query(None, description="Filter by M&A or funding relevance"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     conn: Neo4jConnection = Depends(get_connection),
@@ -28,7 +28,7 @@ def list_articles(
         source=source,
         date_from=date_from,
         date_to=date_to,
-        is_ma_relevant=is_ma_relevant,
+        is_ma_funding_relevant=is_ma_funding_relevant,
         offset=offset,
         limit=page_size,
     )

@@ -92,7 +92,7 @@ class NewsRepository:
                     content:      $content,
                     scraped_at:   $scraped_at,
                     published_at: $published_at,
-                    is_ma_relevant: null,
+                    is_ma_funding_relevant: null,
                     is_processed: false
                 })
                 """,
@@ -114,10 +114,10 @@ class NewsRepository:
         ref.id = article_id
         return ref
 
-    def mark_ma_relevant(self, article_id, is_relevant: bool) -> None:
+    def mark_ma_funding_relevant(self, article_id, is_relevant: bool) -> None:
         with self._session() as session:
             session.run(
-                "MATCH (a:Article {id: $id}) SET a.is_ma_relevant = $rel",
+                "MATCH (a:Article {id: $id}) SET a.is_ma_funding_relevant = $rel",
                 id=str(article_id),
                 rel=is_relevant,
             )
