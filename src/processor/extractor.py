@@ -30,7 +30,9 @@ IMPORTANT RULES:
 Extract the following fields and return ONLY valid JSON:
 
 - buyer: For acquisitions/mergers — the acquiring company. For funding rounds — the investor(s), comma-separated if multiple. Null if not applicable.
+  Always use the company's clean trading name — omit legal suffixes like "Pvt. Ltd.", "Private Limited", "Ltd.", "Inc.", "Corp.", "LLP", etc. (e.g. write "Tata Sons" not "Tata Sons Pvt. Ltd.").
 - seller: For acquisitions/mergers — the company being acquired. For funding rounds — the company receiving the investment. Null if not applicable.
+  Same rule: omit legal suffixes from the company name.
 - deal_value: Monetary value as stated in the article, e.g. "$2.5 billion" (null if not mentioned)
 - sector: Must be exactly one of: {sectors}
 - sub_sector: Only required when sector is "D2C", "Fintech", or "Others".

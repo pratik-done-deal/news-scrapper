@@ -1,12 +1,31 @@
 import hashlib
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+# Legal entity suffixes to strip before company name comparison/storage.
+# Order matters: longer patterns must appear before shorter overlapping ones.
+_LEGAL_SUFFIX_RE = re.compile(
+    r"[\s,.]*(pvt\.?\s*ltd\.?|private\s+limited|public\s+limited"
+    r"|co\.\s*ltd\.?|co\.\s*limited"
+    r"|limited|ltd\.?|inc\.?|incorporated|corp\.?|corporation"
+    r"|llp|llc|gmbh|plc|l\.l\.c\.?|l\.l\.p\.?)[\s.]*$",
+    re.IGNORECASE,
+)
+
+
+def _normalize_company_name(name: str) -> str:
+    """Return a canonical company name by stripping legal suffixes and normalizing whitespace."""
+    name = _LEGAL_SUFFIX_RE.sub("", name.strip()).strip().rstrip(",").strip()
+    name = re.sub(r"\s+", " ", name)
+    return name.title()
+
+
 def _company_id(name: str) -> str:
-    """Deterministic UUID5 so the same company name always gets the same ID."""
-    return str(uuid.uuid5(uuid.NAMESPACE_DNS, name))
+    """Deterministic UUID5 keyed on the normalized name so variants map to the same ID."""
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, _normalize_company_name(name)))
 
 from neo4j import GraphDatabase
 
@@ -170,6 +189,7 @@ class NewsRepository:
             # Create Company nodes and relationships for buyers
             buyer_rel = _ROLE_TO_REL[buyer_role]
             for name in _split_names(buyer):
+                canonical = _normalize_company_name(name)
                 session.run(
                     f"""
                     MERGE (c:Company {{name: $name}})
@@ -178,14 +198,15 @@ class NewsRepository:
                     MATCH (d:Deal {{id: $deal_id}})
                     CREATE (c)-[:{buyer_rel}]->(d)
                     """,
-                    name=name,
-                    company_id=_company_id(name),
+                    name=canonical,
+                    company_id=_company_id(canonical),
                     deal_id=deal_id,
                 )
 
             # Create Company nodes and relationships for sellers
             seller_rel = _ROLE_TO_REL[seller_role]
             for name in _split_names(seller):
+                canonical = _normalize_company_name(name)
                 session.run(
                     f"""
                     MERGE (c:Company {{name: $name}})
@@ -194,8 +215,8 @@ class NewsRepository:
                     MATCH (d:Deal {{id: $deal_id}})
                     CREATE (c)-[:{seller_rel}]->(d)
                     """,
-                    name=name,
-                    company_id=_company_id(name),
+                    name=canonical,
+                    company_id=_company_id(canonical),
                     deal_id=deal_id,
                 )
 
