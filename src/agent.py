@@ -11,13 +11,23 @@ from groq import Groq
 from .db.repository import NewsRepository
 from .processor.extractor import DealExtractor
 from .processor.filter import NewsFilter
-from .scraper.web_scraper import CNBCScraper, ETScraper, FEScraper, IndiaInfolineScraper, WebScraper
+from .scraper.web_scraper import (
+    CNBCScraper,
+    ETScraper,
+    FEScraper,
+    Inc42Scraper,
+    IndianStartupNewsScraper,
+    IndiaInfolineScraper,
+    WebScraper,
+)
 
 SCRAPER_REGISTRY: dict[str, type[WebScraper]] = {
     "et": ETScraper,
     "fe": FEScraper,
     "cnbc": CNBCScraper,
     "iifl": IndiaInfolineScraper,
+    "isn": IndianStartupNewsScraper,
+    "inc42": Inc42Scraper,
 }
 
 logger = logging.getLogger(__name__)

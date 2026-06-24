@@ -1,13 +1,39 @@
-# AGENTS.md — Deal & Funding Intelligence Platform
+# AGENTS.md - Deal & Funding Intelligence Platform
 
 Scrapes Indian financial news (ET, FE, CNBC TV18, IIFL), filters M&A/funding articles, extracts structured deal data via Groq LLM, stores in Neo4j. Exposed via FastAPI.
-**Deep reference:** [contexts/project-context.md](contexts/project-context.md)
+**Deep reference:** [docs/reference/project-context.md](docs/reference/project-context.md)
 
-## Subagents
+## Agentic Development Workflow
+
+Use the smallest read path that can answer the task.
+
+1. Read `docs/agent-context/task-routing.md`.
+2. Follow that routing file to one context file, module cache, existing agent doc, or deep reference only when needed.
+3. Move to exact source files once the owner is known.
+4. Verify with the command named by `docs/agent-context/development-guidelines.md`.
+
+Do not read every agent, skill, or cache file by default. If a module cache identifies the owner files and verification path, skip the matching runtime agent doc unless the task needs deeper behavior context. Source code wins when docs disagree.
+
+## Codex-Compatible Structure
+
+- `.agents/skills/`: development workflow skills. Each skill is a directory with `SKILL.md`.
+- `.codex/agents/workflow-router.toml`: custom router alias for task sequencing.
+- `docs/agent-context/`: first-hop routing, codebase maps, high-risk files, development rules, and mutable module cache.
+- `docs/reference/`: deep architecture references; pull these only for cross-module or architecture-level questions.
+- `agents/`: runtime/domain agent docs for the actual scrape-filter-extract-store product pipeline.
+- `skills/`: product playbooks for common code changes. Prefer `.agents/skills/*` for development workflow sequencing.
+
+## Naming Glossary
+
+- `pipeline agent`: runtime documentation for `NewsAgent` and producer/consumer IPC.
+- `workflow-router`: Codex alias for routing and sequencing agentic development work.
+- `task-orchestrator`: development skill for decomposition, worker briefs, and optional subagent fan-out.
+
+## Runtime Agents
 
 | Agent | File | Responsibility |
 |-------|------|---------------|
-| Orchestrator | [agents/orchestrator-agent.md](agents/orchestrator-agent.md) | Pipeline entry point; producer/consumer IPC |
+| Pipeline | [agents/pipeline-agent.md](agents/pipeline-agent.md) | Pipeline entry point; producer/consumer IPC |
 | Scraper | [agents/scraper-agent.md](agents/scraper-agent.md) | Fetches links + article content from news sites |
 | Filter | [agents/filter-agent.md](agents/filter-agent.md) | Keyword-based M&A/funding relevance gate |
 | Extractor | [agents/extractor-agent.md](agents/extractor-agent.md) | Groq LLM → structured `DealData` |
@@ -65,6 +91,14 @@ GROQ_API_KEY=<required>
 ## Tests
 
 ```bash
-python validate_filter.py    # M&A keyword matching
-python test_date_range.py    # date range filtering
+python -m pytest              # offline development verification
+python validate_filter.py     # live Groq/news smoke check for M&A keyword matching
+python test_date_range.py     # live ET date range smoke check
 ```
+
+## Cache Maintenance
+
+- Update `docs/agent-context/module-cache/*.md` only for reusable, source-backed findings.
+- Do not cache one-off debugging notes or speculation.
+- Refresh `Last refreshed: YYYY-MM-DD` when a cache file is materially updated.
+- Run `python scripts/check_agent_workflow.py` after workflow-doc or agent-context changes.

@@ -14,7 +14,7 @@ import yaml
 from dotenv import load_dotenv
 from groq import Groq
 
-from src.scraper.web_scraper import WebScraper
+from src.agent import SCRAPER_REGISTRY
 from src.processor.filter import NewsFilter
 
 load_dotenv()
@@ -71,18 +71,24 @@ def main() -> None:
     settings = yaml.safe_load(open("config/settings.yaml"))
     sources = yaml.safe_load(open("config/sources.yaml"))["sources"]
 
-    scraper = WebScraper(
-        request_timeout=settings["scraping"]["request_timeout"],
-        delay=settings["scraping"]["delay_between_requests"],
-    )
     kw_filter = NewsFilter()
     groq_client = Groq(api_key=groq_api_key)
     model = settings["groq"]["model"]
     max_articles = settings["scraping"]["max_articles_per_source"]
+    scraper_kwargs = {
+        "request_timeout": settings["scraping"]["request_timeout"],
+        "delay": settings["scraping"]["delay_between_requests"],
+    }
+    scrapers = {}
 
     total = agree = ai_yes_kw_no = ai_no_kw_yes = 0
 
     for source in sources:
+        scraper_key = source.get("scraper", "et")
+        if scraper_key not in scrapers:
+            scrapers[scraper_key] = SCRAPER_REGISTRY[scraper_key](**scraper_kwargs)
+        scraper = scrapers[scraper_key]
+
         print(f"\n{'=' * 70}")
         print(f"  SOURCE: {source['name']}")
         print(f"{'=' * 70}")
@@ -101,14 +107,14 @@ def main() -> None:
         print(f"  {len(links)} links found\n")
 
         for url in links:
-            title, content = scraper.extract_article(url)
+            title, content, _published_date = scraper.extract_article(url)
 
             if not content:
                 print(f"  SKIP (no content): {url}\n")
                 continue
 
             ai_result, ai_reason = ai_check(groq_client, model, title, content)
-            kw_result = kw_filter.is_ma_relevant(title, content)
+            kw_result = kw_filter.is_ma_funding_relevant(title, content)
 
             total += 1
             if ai_result == kw_result:

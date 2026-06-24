@@ -1,4 +1,4 @@
-# Orchestrator Agent
+# Pipeline Agent
 
 ## Role
 Coordinates the full scrape-filter-extract-store pipeline. Manages the producer/consumer multiprocessing pattern. Entry point for all pipeline runs.

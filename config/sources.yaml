@@ -15,6 +15,21 @@ sources:
     paginate: true
     max_pages: 20
 
+  - name: Indian Startup News Funding
+    url: https://indianstartupnews.com/funding
+    domain: indianstartupnews.com
+    link_contains: /funding/
+    scraper: isn
+    paginate: true
+    max_pages: 20
+
+  - name: Inc42 Homepage
+    url: https://inc42.com/
+    domain: inc42.com
+    link_contains: /
+    scraper: inc42
+    paginate: false
+
   # - name: Moneycontrol Business
   #   url: https://www.moneycontrol.com/news/business/
   #   domain: moneycontrol.com

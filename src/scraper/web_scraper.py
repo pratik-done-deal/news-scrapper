@@ -1,4 +1,5 @@
 import logging
+import json
 import re
 import time
 from abc import ABC, abstractmethod
@@ -43,6 +44,49 @@ _IIFL_LISTING_DATE_RE = re.compile(
     r'(\d{1,2}\s+\w{3}\s+\d{4})\s*\|?\s*(\d{1,2}:\d{2}\s*[AP]M)',
     re.IGNORECASE,
 )
+
+_ISN_LISTING_DATE_RE = re.compile(
+    r'(\w{3}\s+\d{1,2},\s*\d{4})(?:\s+(\d{1,2}:\d{2}))?\s*IST',
+    re.IGNORECASE,
+)
+
+_INC42_LONG_DATE_RE = re.compile(
+    r'(\d{1,2})(?:st|nd|rd|th)\s+(\w+),\s*(\d{4})',
+    re.IGNORECASE,
+)
+_INC42_SHORT_DATE_RE = re.compile(r"(\d{1,2})\s+(\w{3})'(\d{2})", re.IGNORECASE)
+
+
+def _parse_iso_datetime(value: str) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _find_jsonld_date(node) -> Optional[datetime]:
+    if isinstance(node, list):
+        for item in node:
+            date = _find_jsonld_date(item)
+            if date:
+                return date
+        return None
+
+    if not isinstance(node, dict):
+        return None
+
+    raw_date = node.get("datePublished") or node.get("dateModified")
+    if isinstance(raw_date, str):
+        date = _parse_iso_datetime(raw_date)
+        if date:
+            return date
+
+    for value in node.values():
+        date = _find_jsonld_date(value)
+        if date:
+            return date
+
+    return None
 
 
 def _parse_et_article_date(text: str) -> Optional[datetime]:
@@ -120,6 +164,44 @@ def _parse_iifl_listing_date(text: str) -> Optional[datetime]:
         return None
 
 
+def _parse_isn_listing_date(text: str) -> Optional[datetime]:
+    """Parse 'Jun 23, 2026 15:47 IST' from Indian Startup News cards."""
+    m = _ISN_LISTING_DATE_RE.search(text)
+    if not m:
+        return None
+    date_part = re.sub(r'\s+', ' ', m.group(1).strip())
+    time_part = m.group(2)
+    raw = f"{date_part} {time_part}" if time_part else date_part
+    fmt = '%b %d, %Y %H:%M' if time_part else '%b %d, %Y'
+    try:
+        return datetime.strptime(raw, fmt).replace(tzinfo=IST)
+    except ValueError:
+        return None
+
+
+def _parse_inc42_listing_date(text: str) -> Optional[datetime]:
+    """Parse Inc42 card dates like '23rd June, 2026' and \"23 Jun'26\"."""
+    text = re.sub(r'\s+', ' ', text.strip())
+
+    m = _INC42_LONG_DATE_RE.search(text)
+    if m:
+        raw = f"{m.group(1)} {m.group(2)} {m.group(3)}"
+        try:
+            return datetime.strptime(raw, '%d %B %Y').replace(tzinfo=IST)
+        except ValueError:
+            return None
+
+    m = _INC42_SHORT_DATE_RE.search(text)
+    if m:
+        raw = f"{m.group(1)} {m.group(2)} 20{m.group(3)}"
+        try:
+            return datetime.strptime(raw, '%d %b %Y').replace(tzinfo=IST)
+        except ValueError:
+            return None
+
+    return None
+
+
 class WebScraper(ABC):
     def __init__(self, request_timeout: int = 30, delay: float = 2.0):
         self.timeout = request_timeout
@@ -166,24 +248,35 @@ class WebScraper(ABC):
         for prop in ("article:published_time", "article:modified_time"):
             tag = soup.find("meta", property=prop)
             if tag and tag.get("content"):
-                try:
-                    return datetime.fromisoformat(tag["content"].replace("Z", "+00:00"))
-                except ValueError:
-                    pass
+                date = _parse_iso_datetime(tag["content"])
+                if date:
+                    return date
 
-        # 2. Try <time datetime="..."> — most reliable when present
+        # 2. JSON-LD NewsArticle metadata (used by Indian Startup News)
+        for script in soup.find_all("script", type="application/ld+json"):
+            text = script.string or script.get_text()
+            if not text:
+                continue
+            try:
+                data = json.loads(text.strip())
+            except ValueError:
+                continue
+            date = _find_jsonld_date(data)
+            if date:
+                return date
+
+        # 3. Try <time datetime="..."> — most reliable when present
         for time_tag in soup.find_all("time"):
             dt_attr = time_tag.get("datetime", "")
             if dt_attr:
-                try:
-                    return datetime.fromisoformat(dt_attr.replace("Z", "+00:00"))
-                except ValueError:
-                    pass
+                date = _parse_iso_datetime(dt_attr)
+                if date:
+                    return date
             date = _parse_et_article_date(time_tag.get_text())
             if date:
                 return date
 
-        # 2. Look inside elements whose class/itemprop hints at a date
+        # 4. Look inside elements whose class/itemprop hints at a date
         for attrs in (
             {"itemprop": "datePublished"},
             {"itemprop": "dateModified"},
@@ -194,7 +287,7 @@ class WebScraper(ABC):
                 if date:
                     return date
 
-        # 3. Full-page text scan as last resort
+        # 5. Full-page text scan as last resort
         return _parse_et_article_date(soup.get_text(" "))
 
     def _bs_left(self, items: list[tuple[str, Optional[datetime]]], end_date: datetime) -> int:
@@ -668,6 +761,166 @@ class WSJScraper(WebScraper):
         # First page may have no page param — append ?page=2
         sep = "&" if "?" in current_url else "?"
         return f"{current_url}{sep}page=2"
+
+
+class IndianStartupNewsScraper(WebScraper):
+    """
+    WebScraper for Indian Startup News Funding Fusion listing pages.
+
+    Article cards: div.feat-a-1 and div.small-post with /funding/<slug> links.
+    Date:          span.publish-date, e.g. "Jun 23, 2026 15:47 IST".
+    Pages:         /funding?page=N.
+    Article dates: JSON-LD NewsArticle datePublished/dateModified.
+    """
+
+    _ISN_PAGE_RE = re.compile(r'([?&]page=)(\d+)', re.IGNORECASE)
+
+    def _listing_links_with_dates(
+        self,
+        html: str,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+    ) -> list[tuple[str, Optional[datetime]]]:
+        soup = BeautifulSoup(html, "lxml")
+        seen: set[str] = set()
+        results: list[tuple[str, Optional[datetime]]] = []
+
+        for card in soup.select("div.feat-a-1, div.small-post"):
+            url: Optional[str] = None
+            for a in card.find_all("a", href=True):
+                href = a["href"].strip()
+                full_url = urljoin(source_url, href)
+                parsed = urlparse(full_url)
+                if (
+                    domain in parsed.netloc
+                    and link_contains in parsed.path
+                    and parsed.path not in ("", "/", link_contains.rstrip("/"))
+                    and not parsed.fragment
+                ):
+                    clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                    if clean_url not in seen:
+                        url = clean_url
+                        seen.add(clean_url)
+                    break
+
+            if not url:
+                continue
+
+            date: Optional[datetime] = None
+            date_span = card.find("span", class_="publish-date")
+            if date_span:
+                date = _parse_isn_listing_date(date_span.get_text(" ", strip=True))
+
+            if date is None:
+                continue  # skip undated cards — binary search requires all dates present
+            results.append((url, date))
+
+        return results
+
+    def _get_next_page_url(self, html: str, current_url: str) -> Optional[str]:
+        """Increment ?page=N for Indian Startup News category pages."""
+        m = self._ISN_PAGE_RE.search(current_url)
+        if m:
+            next_page = int(m.group(2)) + 1
+            return self._ISN_PAGE_RE.sub(rf"\g<1>{next_page}", current_url)
+
+        soup = BeautifulSoup(html, "lxml")
+        for a in soup.find_all("a", class_="paginate", href=True):
+            label = a.get("aria-label", "").lower()
+            if "page 2" in label or a.get_text(strip=True) == "2":
+                return urljoin(current_url, a["href"].strip())
+
+        sep = "&" if "?" in current_url else "?"
+        return f"{current_url}{sep}page=2"
+
+    def get_article_links(
+        self,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+        max_articles: int = 20,
+    ) -> list[str]:
+        """Fetch first page and return dated Funding Fusion article URLs."""
+        html = self._fetch_html(source_url)
+        if not html:
+            return []
+        items = self._listing_links_with_dates(html, source_url, domain, link_contains)
+        return [url for url, _ in items[:max_articles]]
+
+
+class Inc42Scraper(WebScraper):
+    """
+    WebScraper for Inc42 homepage article cards.
+
+    Article cards: div.card-wrapper and li[data-card-id].
+    Date:          span.date, e.g. "23rd June, 2026" or "23 Jun'26".
+    Pages:         homepage load-more is Ajax-backed, so this scraper is first-page only.
+    Article dates: article:published_time OG meta tag.
+    """
+
+    _ARTICLE_PREFIXES = ("/buzz/", "/features/", "/startups/", "/resources/")
+
+    def _is_article_url(self, url: str, domain: str) -> bool:
+        parsed = urlparse(url)
+        if domain not in parsed.netloc or parsed.fragment:
+            return False
+        return any(parsed.path.startswith(prefix) and parsed.path != prefix for prefix in self._ARTICLE_PREFIXES)
+
+    def _listing_links_with_dates(
+        self,
+        html: str,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+    ) -> list[tuple[str, Optional[datetime]]]:
+        soup = BeautifulSoup(html, "lxml")
+        seen: set[str] = set()
+        results: list[tuple[str, Optional[datetime]]] = []
+
+        for card in soup.select("div.card-wrapper, li[data-card-id]"):
+            url: Optional[str] = None
+            for a in card.find_all("a", href=True):
+                full_url = urljoin(source_url, a["href"].strip())
+                if not self._is_article_url(full_url, domain):
+                    continue
+                parsed = urlparse(full_url)
+                clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                if clean_url not in seen:
+                    url = clean_url
+                    seen.add(clean_url)
+                break
+
+            if not url:
+                continue
+
+            date: Optional[datetime] = None
+            date_span = card.find("span", class_="date")
+            if date_span:
+                date = _parse_inc42_listing_date(date_span.get_text(" ", strip=True))
+
+            if date is None:
+                continue  # skip undated cards — binary search requires all dates present
+            results.append((url, date))
+
+        return results
+
+    def _get_next_page_url(self, html: str, current_url: str) -> Optional[str]:
+        return None
+
+    def get_article_links(
+        self,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+        max_articles: int = 20,
+    ) -> list[str]:
+        """Fetch the homepage and return dated Inc42 article URLs."""
+        html = self._fetch_html(source_url)
+        if not html:
+            return []
+        items = self._listing_links_with_dates(html, source_url, domain, link_contains)
+        return [url for url, _ in items[:max_articles]]
 
 
 class CNBCScraper(WebScraper):
