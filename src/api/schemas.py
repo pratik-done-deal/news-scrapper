@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Generic, Optional, TypeVar
 from uuid import UUID
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 T = TypeVar("T")
 
@@ -63,6 +63,47 @@ class DealResponse(BaseModel):
 
 class DealWithArticleResponse(DealResponse):
     article: Optional[ArticleResponse] = None
+
+
+class SignalEventResponse(BaseModel):
+    signal_type: str
+    target_score: str
+    strength: str
+    polarity: str
+    impact: str
+    source_article_id: Optional[str] = None
+    evidence_text: str
+
+
+class SignalEvidenceArticleResponse(BaseModel):
+    article_id: Optional[str] = None
+    title: Optional[str] = None
+    source: Optional[str] = None
+    days_old: Optional[int] = None
+    decay_weight: float
+    company_role: str
+    duplicate_count: int = 1
+
+
+class CompanySignalResponse(BaseModel):
+    id: UUID
+    company_id: UUID
+    company_name: str
+    horizon_days: int
+    generated_at: datetime
+    valid_until: datetime
+    invest_probability: int = Field(ge=0, le=100)
+    fundraise_probability: int = Field(ge=0, le=100)
+    acquisition_target_probability: int = Field(ge=0, le=100)
+    confidence: str
+    direction: str
+    is_speculative: bool
+    articles_analyzed: int
+    duplicates_collapsed: int
+    positive_signals: list[SignalEventResponse] = Field(default_factory=list)
+    negative_signals: list[SignalEventResponse] = Field(default_factory=list)
+    evidence_articles: list[SignalEvidenceArticleResponse] = Field(default_factory=list)
+    explanation: str
 
 
 class PaginatedResponse(BaseModel, Generic[T]):

@@ -1,8 +1,12 @@
-from datetime import date, datetime, time, timezone
+import json
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Literal, Optional
 from uuid import UUID
 
 from neo4j import Driver
+
+from ..processor.company_signal import CompanySignalSnapshot
+from .models import SCHEMA_CONSTRAINTS, SCHEMA_INDEXES
 
 
 class Neo4jConnection:
@@ -36,6 +40,20 @@ def _deal_row_with_article(record) -> dict:
     art = record.get("article")
     deal["article"] = dict(art) if art else None
     return deal
+
+
+def _signal_row(record) -> dict:
+    signal = dict(record["s"])
+    for key in ("positive_signals", "negative_signals", "evidence_articles"):
+        signal[key] = json.loads(signal.pop(f"{key}_json", "[]"))
+    return signal
+
+
+def ensure_signal_schema(conn: Neo4jConnection) -> None:
+    with conn.session() as session:
+        for stmt in SCHEMA_CONSTRAINTS + SCHEMA_INDEXES:
+            if "CompanySignal" in stmt:
+                session.run(stmt)
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +263,139 @@ def get_deals_by_company(
         items = [_deal_row_with_article(record) for record in result]
 
     return total, items
+
+
+# ---------------------------------------------------------------------------
+# Company signal queries
+# ---------------------------------------------------------------------------
+
+def get_company_signal_context(
+    conn: Neo4jConnection,
+    company_id: UUID,
+    horizon_days: int = 30,
+    article_limit: int = 60,
+    deal_limit: int = 25,
+) -> tuple[dict, list[dict], list[dict]]:
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=horizon_days)
+    ).isoformat()
+
+    with conn.session() as session:
+        company_record = session.run(
+            "MATCH (c:Company {id: $id}) RETURN c",
+            id=str(company_id),
+        ).single()
+        if not company_record:
+            return {}, [], []
+
+        company = dict(company_record["c"])
+        articles_result = session.run(
+            """
+            MATCH (c:Company {id: $company_id})
+            OPTIONAL MATCH (c)-[]->(:Deal)<-[:HAS_DEAL]-(dealArticle:Article)
+            WITH c, collect(DISTINCT dealArticle) AS dealArticles
+            MATCH (a:Article)
+            WHERE coalesce(a.published_at, a.scraped_at) >= $cutoff
+              AND (
+                toLower(coalesce(a.title, "")) CONTAINS toLower(c.name)
+                OR toLower(coalesce(a.content, "")) CONTAINS toLower(c.name)
+                OR a IN dealArticles
+              )
+            RETURN DISTINCT a
+            ORDER BY coalesce(a.published_at, a.scraped_at) DESC
+            LIMIT $limit
+            """,
+            company_id=str(company_id),
+            cutoff=cutoff,
+            limit=article_limit,
+        )
+        articles = [dict(record["a"]) for record in articles_result]
+
+        deals_result = session.run(
+            """
+            MATCH (c:Company {id: $company_id})-[r]->(d:Deal)<-[:HAS_DEAL]-(a:Article)
+            RETURN type(r) AS role,
+                   d.deal_type AS deal_type,
+                   d.summary AS summary,
+                   d.deal_value AS deal_value,
+                   d.extracted_at AS extracted_at,
+                   a.id AS article_id,
+                   a.title AS article_title
+            ORDER BY d.extracted_at DESC
+            LIMIT $limit
+            """,
+            company_id=str(company_id),
+            limit=deal_limit,
+        )
+        deal_history = [dict(record) for record in deals_result]
+
+    return company, articles, deal_history
+
+
+def save_company_signal_snapshot(
+    conn: Neo4jConnection,
+    snapshot: CompanySignalSnapshot,
+) -> dict:
+    ensure_signal_schema(conn)
+    data = snapshot.model_dump(mode="json")
+    payload = {
+        **data,
+        "positive_signals_json": json.dumps(data.pop("positive_signals")),
+        "negative_signals_json": json.dumps(data.pop("negative_signals")),
+        "evidence_articles_json": json.dumps(data.pop("evidence_articles")),
+    }
+    payload.pop("positive_signals", None)
+    payload.pop("negative_signals", None)
+    payload.pop("evidence_articles", None)
+
+    with conn.session() as session:
+        record = session.run(
+            """
+            MATCH (c:Company {id: $company_id})
+            CREATE (s:CompanySignal {
+                id: $id,
+                company_id: $company_id,
+                company_name: $company_name,
+                horizon_days: $horizon_days,
+                generated_at: $generated_at,
+                valid_until: $valid_until,
+                invest_probability: $invest_probability,
+                fundraise_probability: $fundraise_probability,
+                acquisition_target_probability: $acquisition_target_probability,
+                confidence: $confidence,
+                direction: $direction,
+                is_speculative: $is_speculative,
+                articles_analyzed: $articles_analyzed,
+                duplicates_collapsed: $duplicates_collapsed,
+                positive_signals_json: $positive_signals_json,
+                negative_signals_json: $negative_signals_json,
+                evidence_articles_json: $evidence_articles_json,
+                explanation: $explanation
+            })
+            CREATE (c)-[:HAS_SIGNAL]->(s)
+            RETURN s
+            """,
+            **payload,
+        ).single()
+
+    return _signal_row(record)
+
+
+def get_latest_company_signal(
+    conn: Neo4jConnection,
+    company_id: UUID,
+) -> Optional[dict]:
+    with conn.session() as session:
+        record = session.run(
+            """
+            MATCH (:Company {id: $company_id})-[:HAS_SIGNAL]->(s:CompanySignal)
+            RETURN s
+            ORDER BY s.generated_at DESC
+            LIMIT 1
+            """,
+            company_id=str(company_id),
+        ).single()
+    return _signal_row(record) if record else None
 
 
 # ---------------------------------------------------------------------------

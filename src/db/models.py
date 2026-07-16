@@ -3,6 +3,7 @@ SCHEMA_CONSTRAINTS = [
     "CREATE CONSTRAINT article_url IF NOT EXISTS FOR (a:Article) REQUIRE a.url IS UNIQUE",
     "CREATE CONSTRAINT deal_id IF NOT EXISTS FOR (d:Deal) REQUIRE d.id IS UNIQUE",
     "CREATE CONSTRAINT company_name IF NOT EXISTS FOR (c:Company) REQUIRE c.name IS UNIQUE",
+    "CREATE CONSTRAINT company_signal_id IF NOT EXISTS FOR (s:CompanySignal) REQUIRE s.id IS UNIQUE",
 ]
 
 SCHEMA_INDEXES = [
@@ -15,4 +16,5 @@ SCHEMA_INDEXES = [
     "CREATE INDEX deal_deal_type IF NOT EXISTS FOR (d:Deal) ON (d.deal_type)",
     "CREATE INDEX deal_extracted_at IF NOT EXISTS FOR (d:Deal) ON (d.extracted_at)",
     "CREATE INDEX company_id IF NOT EXISTS FOR (c:Company) ON (c.id)",
+    "CREATE INDEX company_signal_generated_at IF NOT EXISTS FOR (s:CompanySignal) ON (s.generated_at)",
 ]
