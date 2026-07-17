@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from neo4j import GraphDatabase
 
 from .job_manager import JobManager
-from .routes import analytics, articles, companies, deals, scrape
+from .routes import analytics, articles, companies, deals, extract, scrape
 from ..agent import NewsAgent
 from ..db.queries import Neo4jConnection
 from ..scheduler.service import SchedulerService
@@ -79,6 +79,7 @@ app.include_router(articles.router, prefix="/api/v1")
 app.include_router(companies.router, prefix="/api/v1")
 app.include_router(deals.router, prefix="/api/v1")
 app.include_router(scrape.router, prefix="/api/v1")
+app.include_router(extract.router, prefix="/api/v1")
 app.include_router(analytics.router, prefix="/api/v1")
 
 

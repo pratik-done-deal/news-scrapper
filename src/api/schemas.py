@@ -125,6 +125,10 @@ class ScrapeRequest(BaseModel):
         return v
 
 
+class ExtractRequest(BaseModel):
+    limit: Optional[int] = None
+
+
 class ScrapeJobResponse(BaseModel):
     job_id: str
     status: str

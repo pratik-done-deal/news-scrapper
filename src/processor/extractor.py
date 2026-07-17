@@ -1,11 +1,14 @@
 import json
 import logging
+import time
 from typing import Optional
 
 from groq import Groq
 from pydantic import BaseModel, field_validator
 
 logger = logging.getLogger(__name__)
+
+GROQ_REQUEST_DELAY_SECONDS = 10
 
 SECTORS = [
     "D2C", "Edtech", "Fintech", "Gaming", "Agency", "Marketplace",
@@ -202,6 +205,7 @@ class DealExtractor:
                 title=title or "(no title)",
                 content=(content or "")[:4000],
             )
+            start = time.monotonic()
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
@@ -209,8 +213,13 @@ class DealExtractor:
                 max_tokens=600,
                 response_format={"type": "json_object"},
             )
+            elapsed = time.monotonic() - start
+            logger.info(f"Groq request took {elapsed:.2f}s (model={self.model})")
+
             raw = json.loads(response.choices[0].message.content)
             return DealData(**raw)
         except Exception as e:
             logger.error(f"Extraction LLM call failed: {e}")
             return None
+        finally:
+            time.sleep(GROQ_REQUEST_DELAY_SECONDS)
