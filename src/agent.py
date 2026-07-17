@@ -1,10 +1,9 @@
 import logging
 import multiprocessing
-import queue
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from multiprocessing.queues import Queue
 from typing import Optional
 
 from groq import Groq
@@ -35,22 +34,20 @@ logger = logging.getLogger(__name__)
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
-STOP_PROCESSING = "__STOP_PROCESSING__"
-PRODUCER_LABEL = "P1 producer"
-CONSUMER_LABEL = "P2 consumer"
+SCRAPER_LABEL = "Scraper"
+STORAGE_LABEL = "Storage"
 LOG_FORMAT = "%(asctime)s [%(levelname)s] [%(processName)s] %(name)s: %(message)s"
+MAX_THREADS = 6
 
 
 @dataclass(frozen=True)
-class WorkerConfig:
-    """Everything the dedicated processing process needs to initialize itself."""
+class ScraperDBConfig:
+    """Neo4j connection info a scrape worker needs for its per-link URL dedup check."""
 
     neo4j_uri: str
     neo4j_user: str
     neo4j_password: str
     neo4j_database: str
-    groq_api_key: str
-    groq_model: str
     db_pool_size: int
 
 
@@ -83,142 +80,198 @@ def _ensure_worker_logging() -> None:
     )
 
 
-def _process_source_articles(
-    source_name: str,
+def _scrape_links(
+    scraper: WebScraper,
+    source: dict,
+    max_articles: int,
+    dt_start: Optional[datetime],
+    dt_end: Optional[datetime],
+) -> list[str]:
+    """Collect article URLs for one source without fetching article content."""
+    use_date_range = dt_start and dt_end and source.get("paginate", False)
+    if use_date_range:
+        return scraper.get_article_links_in_date_range(
+            source_url=source["url"],
+            domain=source["domain"],
+            link_contains=source["link_contains"],
+            start_date=dt_start,
+            end_date=dt_end,
+            max_pages=source.get("max_pages", 10),
+        )
+    return scraper.get_article_links(
+        source_url=source["url"],
+        domain=source["domain"],
+        link_contains=source["link_contains"],
+        max_articles=max_articles,
+    )
+
+
+def _scrape_source_worker(
+    source: dict,
+    dt_start: Optional[datetime],
+    dt_end: Optional[datetime],
+    scraper_kwargs: dict,
+    max_articles: int,
+    db_config: ScraperDBConfig,
+) -> dict:
+    """
+    Runs in its own process. Scrapes one source fully, keeping the articles in
+    memory (no DB writes here) and returns them so the main process can
+    combine every source's results and store them in batches once all
+    scrapers finish.
+    """
+    _ensure_worker_logging()
+    source_name = source["name"]
+    process = multiprocessing.current_process().name
+    logger.info(f"{_tag(SCRAPER_LABEL, process)} Starting scrape for [{source_name}]")
+
+    try:
+        scraper_type = source.get("scraper", "et")
+        scraper = SCRAPER_REGISTRY[scraper_type](**scraper_kwargs)
+        repo = NewsRepository(
+            uri=db_config.neo4j_uri,
+            user=db_config.neo4j_user,
+            password=db_config.neo4j_password,
+            database=db_config.neo4j_database,
+            pool_size=db_config.db_pool_size,
+            ensure_schema=False,
+        )
+
+        links = _scrape_links(scraper, source, max_articles, dt_start, dt_end)
+        logger.info(f"  {_tag(SCRAPER_LABEL, source_name)} Found {len(links)} links")
+
+        articles: list[dict] = []
+        for url in links:
+            if repo.url_exists(url):
+                logger.info(f"  {_tag(SCRAPER_LABEL, source_name)} Skip (already in DB): {url[-60:]}")
+                continue
+
+            title, content, published_date = scraper.extract_article(url)
+            if not content:
+                logger.warning(f"  {_tag(SCRAPER_LABEL, source_name)} Skip (no content extracted): {url}")
+                continue
+
+            if dt_start and dt_end and published_date:
+                if published_date < dt_start or published_date > dt_end:
+                    logger.info(
+                        f"  {_tag(SCRAPER_LABEL, source_name)} REJECTED"
+                        f" (date {published_date.strftime('%Y-%m-%d')} outside range): {url[-60:]}"
+                    )
+                    continue
+
+            date_label = published_date.strftime("%Y-%m-%d") if published_date else "date unknown"
+            logger.info(
+                f"  {_tag(SCRAPER_LABEL, source_name)} SCRAPED [{date_label}]:"
+                f" {title or url[-60:]}"
+            )
+            articles.append({
+                "url": url,
+                "title": title,
+                "content": content,
+                "published_date": published_date,
+                "source_name": source_name,
+            })
+
+        repo.close()
+        logger.info(
+            f"{_tag(SCRAPER_LABEL, process)} Completed scrape for [{source_name}]"
+            f" — {len(articles)} article(s) ready for storage"
+        )
+        return {
+            "source_name": source_name,
+            "link_count": len(links),
+            "articles": articles,
+            "error": None,
+        }
+    except Exception as exc:
+        logger.exception(f"{_tag(SCRAPER_LABEL, source_name, process)} Scrape failed")
+        return {
+            "source_name": source_name,
+            "link_count": 0,
+            "articles": [],
+            "error": repr(exc),
+        }
+
+
+def _date_label(value) -> str:
+    """Format a published-date value for logging; accepts a datetime or an ISO string."""
+    if not value:
+        return "date unknown"
+    if isinstance(value, str):
+        return value[:10]
+    return value.strftime("%Y-%m-%d")
+
+
+def _store_batch(batch: list[dict], repo: NewsRepository) -> list[dict]:
+    """Persist one batch of scraped articles (no filtering/extraction). Runs in the main process."""
+    return repo.save_articles_batch(batch)
+
+
+def _filter_and_extract_articles(
     articles: list[dict],
     repo: NewsRepository,
     news_filter: NewsFilter,
     extractor: DealExtractor,
 ) -> tuple[int, int]:
     """
-    Save scraped article data, filter it, and extract deals for one source batch.
-    Runs inside the dedicated processing process.
+    Run filter/extraction over a list of already-stored articles.
+
+    Each article is handled independently — one article's failure is logged
+    and skipped rather than aborting the rest of the list, so a single bad
+    article (LLM error, malformed content) can't leave every article behind
+    it permanently stuck at is_ma_funding_relevant: null.
     """
-    process = multiprocessing.current_process().name
-    logger.info(
-        f"{_tag(CONSUMER_LABEL, process)} Started processing [{source_name}]"
-        f" — {len(articles)} article(s)"
-    )
-    new = deals = 0
+    processed = deals = 0
+    for article in articles:
+        source_name = article["source_name"]
+        title = article["title"]
+        content = article["content"]
+        article_id = article["id"]
+        date_label = _date_label(article.get("published_date") or article.get("published_at"))
 
-    for article_data in articles:
-        url = article_data["url"]
-        if repo.url_exists(url):
-            logger.info(f"  {_tag(CONSUMER_LABEL, source_name, process)} Skip (already in DB): {url[-60:]}")
-            continue
-
-        title = article_data["title"]
-        content = article_data["content"]
-        published_date = article_data["published_date"]
-        date_label = published_date.strftime("%Y-%m-%d") if published_date else "date unknown"
-        logger.info(
-            f"  {_tag(CONSUMER_LABEL, source_name, process)}"
-            f" Filtering/extracting [{date_label}]: {title or url[-60:]}"
-        )
-
-        article = repo.save_article(
-            url, source_name, title, content, published_at=published_date
-        )
-        new += 1
-
-        relevant = news_filter.is_ma_funding_relevant(title, content)
-        repo.mark_ma_funding_relevant(article.id, relevant)
-
-        if not relevant:
-            logger.info(
-                f"  {_tag(CONSUMER_LABEL, source_name, process)}"
-                " Not M&A or funding relevant — skipping extraction"
-            )
-            continue
-
-        deal = extractor.extract(title, content)
-        if deal:
-            repo.save_deal(
-                article_id=article.id,
-                buyer=deal.buyer,      # split into company_deals by repo
-                seller=deal.seller,    # split into company_deals by repo
-                deal_value=deal.deal_value,
-                sector=deal.sector,
-                sub_sector=deal.sub_sector,
-                country=deal.country,
-                deal_type=deal.deal_type,
-                summary=deal.summary,
-            )
-            deals += 1
-            logger.info(
-                f"  {_tag(CONSUMER_LABEL, source_name, process)} Deal: [{deal.deal_type}]"
-                f" {deal.buyer} / {deal.seller}"
-                f" — {deal.deal_value or 'value undisclosed'}"
-            )
-
-    logger.info(
-        f"{_tag(CONSUMER_LABEL, process)} Finished [{source_name}]"
-        f" — new: {new}, deals: {deals}"
-    )
-    return new, deals
-
-
-def _processing_worker(
-    job_queue: Queue,
-    result_queue: Queue,
-    config: WorkerConfig,
-) -> None:
-    """Dedicated process that consumes scraped source batches and processes articles."""
-    _ensure_worker_logging()
-    process = multiprocessing.current_process().name
-    logger.info(f"{_tag(CONSUMER_LABEL, process)} Worker booting and waiting for scraped batches")
-
-    try:
-        groq_client = Groq(api_key=config.groq_api_key)
-        repo = NewsRepository(
-            uri=config.neo4j_uri,
-            user=config.neo4j_user,
-            password=config.neo4j_password,
-            database=config.neo4j_database,
-            pool_size=config.db_pool_size,
-        )
-        news_filter = NewsFilter()
-        extractor = DealExtractor(groq_client, config.groq_model)
-    except Exception as exc:
-        logger.exception(f"{_tag(process)} Processing worker failed to initialize")
-        result_queue.put({"type": "worker_error", "error": repr(exc)})
-        return
-
-    while True:
-        job = job_queue.get()
-        if job == STOP_PROCESSING:
-            logger.info(f"{_tag(CONSUMER_LABEL, process)} Stop signal received")
-            break
-
-        source_name = job["source_name"]
-        logger.info(
-            f"{_tag(CONSUMER_LABEL, process)} Picked up [{source_name}]"
-            f" from queue — {len(job['articles'])} article(s)"
-        )
         try:
-            new, deals = _process_source_articles(
-                source_name=source_name,
-                articles=job["articles"],
-                repo=repo,
-                news_filter=news_filter,
-                extractor=extractor,
+            logger.info(
+                f"  {_tag(STORAGE_LABEL, source_name)}"
+                f" Filtering/extracting [{date_label}]: {title or article['url'][-60:]}"
             )
-            result_queue.put({
-                "type": "source_done",
-                "source_name": source_name,
-                "new": new,
-                "deals": deals,
-            })
-        except Exception as exc:
-            logger.exception(f"{_tag(CONSUMER_LABEL, source_name, process)} Processing failed")
-            result_queue.put({
-                "type": "source_error",
-                "source_name": source_name,
-                "error": repr(exc),
-            })
 
-    logger.info(f"{_tag(CONSUMER_LABEL, process)} Worker exiting")
-    result_queue.put({"type": "worker_done"})
+            relevant = news_filter.is_ma_funding_relevant(title, content)
+            repo.mark_ma_funding_relevant(article_id, relevant)
+            processed += 1
+
+            if not relevant:
+                logger.info(
+                    f"  {_tag(STORAGE_LABEL, source_name)}"
+                    " Not M&A or funding relevant — skipping extraction"
+                )
+                continue
+
+            deal = extractor.extract(title, content)
+            if deal:
+                repo.save_deal(
+                    article_id=article_id,
+                    buyer=deal.buyer,      # split into company_deals by repo
+                    seller=deal.seller,    # split into company_deals by repo
+                    deal_value=deal.deal_value,
+                    sector=deal.sector,
+                    sub_sector=deal.sub_sector,
+                    country=deal.country,
+                    deal_type=deal.deal_type,
+                    summary=deal.summary,
+                )
+                deals += 1
+                logger.info(
+                    f"  {_tag(STORAGE_LABEL, source_name)} Deal: [{deal.deal_type}]"
+                    f" {deal.buyer} / {deal.seller}"
+                    f" — {deal.deal_value or 'value undisclosed'}"
+                )
+        except Exception:
+            logger.exception(
+                f"  {_tag(STORAGE_LABEL, source_name)}"
+                f" Filter/extraction failed for article {article_id} — will retry next cycle"
+            )
+
+    return processed, deals
 
 
 class NewsAgent:
@@ -234,206 +287,29 @@ class NewsAgent:
         scraping = settings["scraping"]
         db_cfg = settings.get("database", {})
 
-        self.config = WorkerConfig(
+        self.db_config = ScraperDBConfig(
             neo4j_uri=neo4j_uri,
             neo4j_user=neo4j_user,
             neo4j_password=neo4j_password,
             neo4j_database=neo4j_database,
-            groq_api_key=groq_api_key,
-            groq_model=settings["groq"]["model"],
             db_pool_size=db_cfg.get("pool_size", 5),
         )
         self._scraper_kwargs = {
             "request_timeout": scraping["request_timeout"],
             "delay": scraping["delay_between_requests"],
         }
-        self._scrapers: dict[str, WebScraper] = {}
-        self.repo = NewsRepository(
-            uri=self.config.neo4j_uri,
-            user=self.config.neo4j_user,
-            password=self.config.neo4j_password,
-            database=self.config.neo4j_database,
-            pool_size=self.config.db_pool_size,
-        )
         self.max_articles = scraping["max_articles_per_source"]
+        self.batch_size = scraping.get("batch_size", 10)
 
-    def _get_scraper(self, scraper_type: str) -> WebScraper:
-        if scraper_type not in self._scrapers:
-            cls = SCRAPER_REGISTRY[scraper_type]
-            self._scrapers[scraper_type] = cls(**self._scraper_kwargs)
-        return self._scrapers[scraper_type]
-
-    def _scrape_links(
-        self,
-        source: dict,
-        dt_start: Optional[datetime],
-        dt_end: Optional[datetime],
-    ) -> list[str]:
-        """Collect article URLs for one source without fetching article content."""
-        scraper_type = source.get("scraper", "et")
-        scraper = self._get_scraper(scraper_type)
-        use_date_range = dt_start and dt_end and source.get("paginate", False)
-
-        if use_date_range:
-            return scraper.get_article_links_in_date_range(
-                source_url=source["url"],
-                domain=source["domain"],
-                link_contains=source["link_contains"],
-                start_date=dt_start,
-                end_date=dt_end,
-                max_pages=source.get("max_pages", 10),
-            )
-        return scraper.get_article_links(
-            source_url=source["url"],
-            domain=source["domain"],
-            link_contains=source["link_contains"],
-            max_articles=self.max_articles,
+        self.repo = NewsRepository(
+            uri=neo4j_uri,
+            user=neo4j_user,
+            password=neo4j_password,
+            database=neo4j_database,
+            pool_size=self.db_config.db_pool_size,
         )
-
-    def _scrape_articles(
-        self,
-        source: dict,
-        dt_start: Optional[datetime],
-        dt_end: Optional[datetime],
-    ) -> tuple[int, list[dict]]:
-        """Scrape article content for one source and return data for processing."""
-        source_name = source["name"]
-        scraper_type = source.get("scraper", "et")
-        scraper = self._get_scraper(scraper_type)
-        logger.info(f"{_tag(PRODUCER_LABEL)} Starting scrape for [{source_name}]")
-        links = self._scrape_links(source, dt_start, dt_end)
-        articles: list[dict] = []
-
-        logger.info(f"  {_tag(PRODUCER_LABEL, source_name)} Found {len(links)} links")
-
-        for url in links:
-            if self.repo.url_exists(url):
-                logger.info(f"  {_tag(PRODUCER_LABEL, source_name)} Skip (already in DB): {url[-60:]}")
-                continue
-
-            title, content, published_date = scraper.extract_article(url)
-            if not content:
-                logger.warning(f"  {_tag(PRODUCER_LABEL, source_name)} Skip (no content extracted): {url}")
-                continue
-
-            if dt_start and dt_end and published_date:
-                if published_date < dt_start or published_date > dt_end:
-                    logger.info(
-                        f"  {_tag(PRODUCER_LABEL, source_name)} REJECTED"
-                        f" (date {published_date.strftime('%Y-%m-%d')} outside range): {url[-60:]}"
-                    )
-                    continue
-
-            date_label = published_date.strftime("%Y-%m-%d") if published_date else "date unknown"
-            logger.info(
-                f"  {_tag(PRODUCER_LABEL, source_name)} SCRAPED [{date_label}]:"
-                f" {title or url[-60:]}"
-            )
-            articles.append({
-                "url": url,
-                "title": title,
-                "content": content,
-                "published_date": published_date,
-            })
-
-        logger.info(
-            f"{_tag(PRODUCER_LABEL)} Completed scrape for [{source_name}]"
-            f" — {len(articles)} article(s) ready for {CONSUMER_LABEL}"
-        )
-        return len(links), articles
-
-    def _handle_processor_message(
-        self,
-        counters: dict,
-        active_sources: list[str],
-        message: dict,
-    ) -> bool:
-        """Apply one processor result message. Returns True when the worker is done."""
-        message_type = message.get("type")
-
-        if message_type == "source_done":
-            source_name = message["source_name"]
-            if source_name in active_sources:
-                active_sources.remove(source_name)
-            counters["new"] += message["new"]
-            counters["deals"] += message["deals"]
-            logger.info(
-                f"{_tag(f'{CONSUMER_LABEL}->MainProcess')} Completed [{source_name}]"
-                f" | active queue: {active_sources or 'empty'}"
-            )
-            return False
-
-        if message_type == "source_error":
-            source_name = message["source_name"]
-            if source_name in active_sources:
-                active_sources.remove(source_name)
-            error = f"{source_name}: {message['error']}"
-            counters["errors"].append(error)
-            logger.error(f"{_tag(f'{CONSUMER_LABEL}->MainProcess')} Error — {error}")
-            return False
-
-        if message_type == "worker_error":
-            raise RuntimeError(f"Processing process failed to initialize: {message['error']}")
-
-        if message_type == "worker_done":
-            return True
-
-        logger.warning(f"{_tag(f'{CONSUMER_LABEL}->MainProcess')} Unknown message: {message}")
-        return False
-
-    def _drain_processor_results(
-        self,
-        result_queue: Queue,
-        counters: dict,
-        active_sources: list[str],
-    ) -> bool:
-        """Read any currently available worker messages without blocking."""
-        worker_done = False
-        while True:
-            try:
-                message = result_queue.get_nowait()
-            except queue.Empty:
-                break
-            worker_done = (
-                self._handle_processor_message(counters, active_sources, message)
-                or worker_done
-            )
-        return worker_done
-
-    def _wait_for_processor(
-        self,
-        processor: multiprocessing.Process,
-        result_queue: Queue,
-        counters: dict,
-        active_sources: list[str],
-    ) -> None:
-        """Block until the processing process reports completion or exits unexpectedly."""
-        worker_done = False
-        while not worker_done:
-            try:
-                message = result_queue.get(timeout=1)
-            except queue.Empty:
-                worker_done = self._drain_processor_results(
-                    result_queue, counters, active_sources
-                )
-                if worker_done:
-                    break
-                if not processor.is_alive():
-                    raise RuntimeError(
-                        "Processing process exited unexpectedly "
-                        f"with code {processor.exitcode}"
-                    )
-                continue
-
-            worker_done = self._handle_processor_message(
-                counters, active_sources, message
-            )
-
-        processor.join()
-        if processor.exitcode not in (0, None):
-            raise RuntimeError(
-                f"Processing process exited with code {processor.exitcode}"
-            )
+        self.news_filter = NewsFilter()
+        self.extractor = DealExtractor(Groq(api_key=groq_api_key), settings["groq"]["model"])
 
     def _resolve_date_range(
         self,
@@ -448,81 +324,131 @@ class NewsAgent:
         logger.info(f"Date range filter: {start_date} → {end_date} (IST)")
         return dt_start, dt_end
 
-    def _dispatch_sources(
+    def _scrape_all_sources(
         self,
         sources: list[dict],
         dt_start: Optional[datetime],
         dt_end: Optional[datetime],
-        main_process: str,
-        processor: multiprocessing.Process,
-        job_queue: Queue,
-        result_queue: Queue,
         counters: dict,
-        active_sources: list[str],
-    ) -> int:
-        """Scrape each source in turn and hand its articles to the processor."""
+    ) -> tuple[int, list[dict]]:
+        """
+        Run one scrape worker process per source concurrently and collect
+        their results once every one of them has finished (join).
+        """
         total_scraped = 0
-        for source in sources:
-            worker_done = self._drain_processor_results(
-                result_queue, counters, active_sources
-            )
-            if worker_done:
-                raise RuntimeError(
-                    "Processing process exited before all sources were dispatched"
+        all_articles: list[dict] = []
+
+        ctx = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=MAX_THREADS, mp_context=ctx) as executor:
+            futures = {
+                executor.submit(
+                    _scrape_source_worker,
+                    source, dt_start, dt_end, self._scraper_kwargs,
+                    self.max_articles, self.db_config,
+                ): source["name"]
+                for source in sources
+            }
+            for future in as_completed(futures):
+                source_name = futures[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    logger.exception(f"{_tag(SCRAPER_LABEL)} Worker crashed for [{source_name}]")
+                    counters["errors"].append(f"{source_name}: {exc!r}")
+                    continue
+
+                if result["error"]:
+                    counters["errors"].append(f"{source_name}: {result['error']}")
+                    logger.error(
+                        f"{_tag(SCRAPER_LABEL)} Error scraping [{source_name}]: {result['error']}"
+                    )
+                    continue
+
+                total_scraped += result["link_count"]
+                all_articles.extend(result["articles"])
+                logger.info(
+                    f"{_tag(SCRAPER_LABEL)} [{source_name}] joined"
+                    f" — {len(result['articles'])} article(s)"
                 )
-            if not processor.is_alive():
-                self._drain_processor_results(
-                    result_queue, counters, active_sources
-                )
-                raise RuntimeError(
-                    "Processing process exited unexpectedly "
-                    f"with code {processor.exitcode}"
-                )
 
-            name = source["name"]
-            logger.info(
-                f"{_tag(PRODUCER_LABEL, main_process)} Scraping articles for [{name}]"
-                + (f" | processing queue active: {active_sources}" if active_sources else "")
-            )
+        return total_scraped, all_articles
 
-            link_count, articles = self._scrape_articles(source, dt_start, dt_end)
-            total_scraped += link_count
-
-            active_sources.append(name)
-            job_queue.put({
-                "source_name": name,
-                "articles": articles,
-            })
-
-            logger.info(
-                f"{_tag(f'{PRODUCER_LABEL}->{CONSUMER_LABEL}')} Handoff [{name}]"
-                f" — {len(articles)} article(s) queued"
-                f" | active queue: {active_sources}"
-            )
-        return total_scraped
-
-    def _shutdown_processor(
+    def scrape_and_store(
         self,
-        processor: multiprocessing.Process,
-        job_queue: Queue,
-        result_queue: Queue,
-        stop_sent: bool,
-    ) -> None:
-        """Signal the processing process to stop (if not done already) and clean up."""
-        if not stop_sent:
+        sources: list[dict],
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> dict:
+        """
+        Scrape all sources in parallel (one process per source) and store the
+        results in fixed-size batches once every source has finished (join).
+        No filtering/extraction here — that's extract_pending()'s job, so this
+        can run on its own schedule (ScrapperScheduler).
+        """
+        dt_start, dt_end = self._resolve_date_range(start_date, end_date)
+        counters = {"scraped": 0, "new": 0, "errors": []}
+
+        logger.info(f"Scrape cycle started — {len(sources)} source(s) scraping in parallel")
+
+        total_scraped, all_articles = self._scrape_all_sources(
+            sources, dt_start, dt_end, counters
+        )
+        counters["scraped"] = total_scraped
+
+        logger.info(
+            f"{_tag(SCRAPER_LABEL)} All sources scraped and joined."
+            f" {len(all_articles)} article(s) to store in batches of {self.batch_size}"
+        )
+
+        for i in range(0, len(all_articles), self.batch_size):
+            batch = all_articles[i:i + self.batch_size]
+            batch_num = i // self.batch_size
             try:
-                job_queue.put(STOP_PROCESSING)
-            except Exception:
-                logger.exception("Failed to send processing worker stop signal")
+                inserted = _store_batch(batch, self.repo)
+                counters["new"] += len(inserted)
+            except Exception as exc:
+                logger.exception(f"{_tag(STORAGE_LABEL)} Batch {batch_num} store failed")
+                counters["errors"].append(f"batch {batch_num}: {exc!r}")
 
-        processor.join(timeout=5)
-        if processor.is_alive():
-            logger.warning(f"{CONSUMER_LABEL} did not stop in time; terminating")
-            processor.terminate()
-            processor.join(timeout=5)
+        logger.info(
+            f"Scrape cycle complete — scraped: {counters['scraped']}, new: {counters['new']}"
+        )
+        if counters["errors"]:
+            logger.error(f"Scrape cycle completed with errors: {counters['errors']}")
+        return counters
 
-        job_queue.close()
-        result_queue.close()
+    def extract_pending(self, limit: Optional[int] = None) -> dict:
+        """
+        Filter/extract over articles that are already stored but haven't been
+        filtered yet (is_ma_funding_relevant IS NULL) — independent of when or
+        by whom they were scraped, so this self-heals any article left behind
+        by a previous failed cycle. Runs on its own schedule (ExtractionScheduler).
+        """
+        counters = {"processed": 0, "deals": 0, "errors": []}
+
+        articles = self.repo.get_unprocessed_articles(limit)
+        logger.info(
+            f"{_tag(STORAGE_LABEL)} Extraction cycle started — {len(articles)} pending article(s)"
+        )
+        if not articles:
+            return counters
+
+        try:
+            processed, deals = _filter_and_extract_articles(
+                articles, self.repo, self.news_filter, self.extractor
+            )
+            counters["processed"] = processed
+            counters["deals"] = deals
+        except Exception as exc:
+            logger.exception(f"{_tag(STORAGE_LABEL)} Extraction cycle failed")
+            counters["errors"].append(repr(exc))
+
+        logger.info(
+            f"Extraction cycle complete — processed: {counters['processed']}, deals: {counters['deals']}"
+        )
+        if counters["errors"]:
+            logger.error(f"Extraction cycle completed with errors: {counters['errors']}")
+        return counters
 
     def run(
         self,
@@ -531,60 +457,17 @@ class NewsAgent:
         end_date: Optional[str] = None,
     ) -> None:
         """
-        Pipeline execution:
-          Process 1 scrapes source listing pages and article content in order.
-          Process 2 consumes each completed source batch for database save,
-          filtering, and extraction.
-
-        This keeps processing concurrency fixed at one worker process instead
-        of scaling workers with the number of configured sources.
+        One-shot end-to-end run (used by the CLI): scrape and store everything,
+        then process everything currently pending — including any backlog left
+        over from earlier runs.
         """
-        dt_start, dt_end = self._resolve_date_range(start_date, end_date)
-
-        main_process = multiprocessing.current_process().name
-        logger.info(
-            f"Agent run started — {PRODUCER_LABEL} on [{main_process}],"
-            f" {CONSUMER_LABEL} will run in one dedicated process,"
-            f" sources: {len(sources)}"
-        )
-
-        counters = {"new": 0, "deals": 0, "errors": []}
-        active_sources: list[str] = []
-
-        ctx = multiprocessing.get_context("spawn")
-        job_queue = ctx.Queue()
-        result_queue = ctx.Queue()
-        processor = ctx.Process(
-            target=_processing_worker,
-            name="article-processor",
-            args=(job_queue, result_queue, self.config),
-        )
-
-        stop_sent = False
-        processor.start()
-
-        try:
-            total_scraped = self._dispatch_sources(
-                sources, dt_start, dt_end, main_process,
-                processor, job_queue, result_queue, counters, active_sources,
-            )
-
-            job_queue.put(STOP_PROCESSING)
-            stop_sent = True
-            logger.info(
-                f"{_tag(PRODUCER_LABEL, main_process)} All sources scraped."
-                f" Stop signal queued; waiting for {CONSUMER_LABEL}:"
-                f" {active_sources or 'empty'}"
-            )
-            self._wait_for_processor(
-                processor, result_queue, counters, active_sources
-            )
-        finally:
-            self._shutdown_processor(processor, job_queue, result_queue, stop_sent)
+        scrape_counters = self.scrape_and_store(sources, start_date, end_date)
+        extract_counters = self.extract_pending(limit=None)
 
         logger.info(
-            f"Run complete — scraped: {total_scraped},"
-            f" new: {counters['new']}, deals: {counters['deals']}"
+            f"Run complete — scraped: {scrape_counters['scraped']},"
+            f" new: {scrape_counters['new']}, deals: {extract_counters['deals']}"
         )
-        if counters["errors"]:
-            logger.error(f"Run completed with processing errors: {counters['errors']}")
+        errors = scrape_counters["errors"] + extract_counters["errors"]
+        if errors:
+            logger.error(f"Run completed with errors: {errors}")

@@ -9,7 +9,9 @@ from neo4j import GraphDatabase
 
 from .job_manager import JobManager
 from .routes import analytics, articles, companies, deals, scrape
+from ..agent import NewsAgent
 from ..db.queries import Neo4jConnection
+from ..scheduler.service import SchedulerService
 
 load_dotenv()
 
@@ -20,9 +22,12 @@ async def lifespan(app: FastAPI):
     neo4j_user = os.environ.get("NEO4J_USER", "neo4j")
     neo4j_password = os.environ.get("NEO4J_PASSWORD")
     neo4j_database = os.environ.get("NEO4J_DATABASE", "neo4j")
+    groq_api_key = os.environ.get("GROQ_API_KEY")
 
     if not neo4j_password:
         raise EnvironmentError("NEO4J_PASSWORD is not set")
+    if not groq_api_key:
+        raise EnvironmentError("GROQ_API_KEY is not set")
 
     with open("config/settings.yaml") as f:
         settings = yaml.safe_load(f)
@@ -41,8 +46,24 @@ async def lifespan(app: FastAPI):
     app.state.job_manager = JobManager()
     app.state.executor = ThreadPoolExecutor(max_workers=2)
 
+    scheduler_agent = NewsAgent(
+        settings,
+        neo4j_uri=neo4j_uri,
+        neo4j_user=neo4j_user,
+        neo4j_password=neo4j_password,
+        neo4j_database=neo4j_database,
+        groq_api_key=groq_api_key,
+    )
+    app.state.scheduler_service = SchedulerService(
+        agent=scheduler_agent,
+        sources=sources_config["sources"],
+        scheduler_cfg=settings.get("scheduler", {}),
+    )
+    app.state.scheduler_service.start()
+
     yield
 
+    app.state.scheduler_service.shutdown()
     app.state.executor.shutdown(wait=False)
     app.state.conn.driver.close()
 

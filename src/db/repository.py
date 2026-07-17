@@ -55,14 +55,23 @@ def _roles_for_deal_type(deal_type: Optional[str]) -> tuple[str, str]:
 
 
 class NewsRepository:
-    def __init__(self, uri: str, user: str, password: str, database: str = "neo4j", pool_size: int = 5):
+    def __init__(
+        self,
+        uri: str,
+        user: str,
+        password: str,
+        database: str = "neo4j",
+        pool_size: int = 5,
+        ensure_schema: bool = True,
+    ):
         self._driver = GraphDatabase.driver(
             uri,
             auth=(user, password),
             max_connection_pool_size=pool_size,
         )
         self._database = database
-        self._init_schema()
+        if ensure_schema:
+            self._init_schema()
 
     def _session(self):
         return self._driver.session(database=self._database)
@@ -132,6 +141,85 @@ class NewsRepository:
         ref = _ArticleRef()
         ref.id = article_id
         return ref
+
+    def save_articles_batch(self, articles: list[dict]) -> list[dict]:
+        """
+        Batch-insert scraped articles, skipping ones already in the DB.
+
+        Each input dict needs: url, title, content, published_date, source_name.
+        Returns the subset that was actually inserted, each enriched with the
+        generated `id` (and `url_hash`) so callers can run filter/extraction
+        against them immediately.
+        """
+        if not articles:
+            return []
+
+        rows = []
+        for article in articles:
+            published_date = article["published_date"]
+            rows.append({
+                **article,
+                "id": str(uuid.uuid4()),
+                "url_hash": self._hash_url(article["url"]),
+                "scraped_at": datetime.now(timezone.utc).isoformat(),
+                "published_at": published_date.isoformat() if published_date else None,
+            })
+
+        with self._session() as session:
+            existing = session.run(
+                "UNWIND $hashes AS h MATCH (a:Article {url_hash: h}) RETURN a.url_hash AS h",
+                hashes=[row["url_hash"] for row in rows],
+            )
+            existing_hashes = {record["h"] for record in existing}
+
+            new_rows = [row for row in rows if row["url_hash"] not in existing_hashes]
+            if not new_rows:
+                return []
+
+            session.run(
+                """
+                UNWIND $rows AS row
+                CREATE (a:Article {
+                    id:           row.id,
+                    url:          row.url,
+                    url_hash:     row.url_hash,
+                    source:       row.source_name,
+                    title:        row.title,
+                    content:      row.content,
+                    scraped_at:   row.scraped_at,
+                    published_at: row.published_at,
+                    is_ma_funding_relevant: null,
+                    is_processed: false
+                })
+                """,
+                rows=new_rows,
+            )
+
+        return new_rows
+
+    def get_unprocessed_articles(self, limit: Optional[int] = None) -> list[dict]:
+        """
+        Fetch Article rows that haven't been filtered yet
+        (is_ma_funding_relevant IS NULL), oldest first.
+
+        Returned dicts use `source_name` (not the node's `source` property) so
+        the shape matches what freshly-scraped article dicts already use —
+        callers run the same filter/extraction code against either.
+        """
+        query = "MATCH (a:Article) WHERE a.is_ma_funding_relevant IS NULL RETURN a ORDER BY a.scraped_at ASC"
+        params: dict = {}
+        if limit is not None:
+            query += " LIMIT $limit"
+            params["limit"] = limit
+
+        with self._session() as session:
+            result = session.run(query, **params)
+            rows = []
+            for record in result:
+                row = dict(record["a"])
+                row["source_name"] = row.pop("source")
+                rows.append(row)
+            return rows
 
     def mark_ma_funding_relevant(self, article_id, is_relevant: bool) -> None:
         with self._session() as session:
