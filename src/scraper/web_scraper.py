@@ -64,6 +64,16 @@ def _parse_iso_datetime(value: str) -> Optional[datetime]:
         return None
 
 
+def _try_parse(raw: str, *formats: str) -> Optional[datetime]:
+    """Try each strptime format in order, returning the first IST-aware match."""
+    for fmt in formats:
+        try:
+            return datetime.strptime(raw, fmt).replace(tzinfo=IST)
+        except ValueError:
+            continue
+    return None
+
+
 def _find_jsonld_date(node) -> Optional[datetime]:
     if isinstance(node, list):
         for item in node:
@@ -97,12 +107,7 @@ def _parse_et_article_date(text: str) -> Optional[datetime]:
     raw = m.group(1).strip()
     raw = re.sub(r'\s*:\s*', ':', raw)          # "04 : 40 : 00" -> "04:40:00"
     raw = re.sub(r'\s+IST\s*$', '', raw).strip()
-    for fmt in ('%b %d, %Y, %I:%M:%S %p', '%b %d, %Y, %I:%M %p'):
-        try:
-            return datetime.strptime(raw, fmt).replace(tzinfo=IST)
-        except ValueError:
-            continue
-    return None
+    return _try_parse(raw, '%b %d, %Y, %I:%M:%S %p', '%b %d, %Y, %I:%M %p')
 
 
 def _parse_et_listing_date(text: str) -> Optional[datetime]:
@@ -111,10 +116,7 @@ def _parse_et_listing_date(text: str) -> Optional[datetime]:
     if not m:
         return None
     raw = re.sub(r'\s+IST\s*$', '', m.group(1).strip()).strip()
-    try:
-        return datetime.strptime(raw, '%b %d, %Y, %I:%M %p').replace(tzinfo=IST)
-    except ValueError:
-        return None
+    return _try_parse(raw, '%b %d, %Y, %I:%M %p')
 
 
 # Livemint listing date formats:
@@ -143,11 +145,9 @@ def _parse_lm_listing_date(text: str) -> Optional[datetime]:
     m = _LM_DATE_RE.search(text)
     if m:
         raw = re.sub(r'\s+', ' ', m.group(1).strip())
-        for fmt in ('%d %B %Y', '%d %b %Y'):
-            try:
-                return datetime.strptime(raw, fmt).replace(tzinfo=IST)
-            except ValueError:
-                continue
+        date = _try_parse(raw, '%d %B %Y', '%d %b %Y')
+        if date:
+            return date
 
     return None
 
@@ -158,10 +158,7 @@ def _parse_iifl_listing_date(text: str) -> Optional[datetime]:
     if not m:
         return None
     raw = f"{m.group(1).strip()} {m.group(2).strip()}"
-    try:
-        return datetime.strptime(raw, '%d %b %Y %I:%M %p').replace(tzinfo=IST)
-    except ValueError:
-        return None
+    return _try_parse(raw, '%d %b %Y %I:%M %p')
 
 
 def _parse_isn_listing_date(text: str) -> Optional[datetime]:
@@ -173,10 +170,7 @@ def _parse_isn_listing_date(text: str) -> Optional[datetime]:
     time_part = m.group(2)
     raw = f"{date_part} {time_part}" if time_part else date_part
     fmt = '%b %d, %Y %H:%M' if time_part else '%b %d, %Y'
-    try:
-        return datetime.strptime(raw, fmt).replace(tzinfo=IST)
-    except ValueError:
-        return None
+    return _try_parse(raw, fmt)
 
 
 def _parse_inc42_listing_date(text: str) -> Optional[datetime]:
@@ -186,18 +180,12 @@ def _parse_inc42_listing_date(text: str) -> Optional[datetime]:
     m = _INC42_LONG_DATE_RE.search(text)
     if m:
         raw = f"{m.group(1)} {m.group(2)} {m.group(3)}"
-        try:
-            return datetime.strptime(raw, '%d %B %Y').replace(tzinfo=IST)
-        except ValueError:
-            return None
+        return _try_parse(raw, '%d %B %Y')
 
     m = _INC42_SHORT_DATE_RE.search(text)
     if m:
         raw = f"{m.group(1)} {m.group(2)} 20{m.group(3)}"
-        try:
-            return datetime.strptime(raw, '%d %b %Y').replace(tzinfo=IST)
-        except ValueError:
-            return None
+        return _try_parse(raw, '%d %b %Y')
 
     return None
 
@@ -232,13 +220,62 @@ class WebScraper(ABC):
     # ------------------------------------------------------------------
 
     def _fetch_html(self, url: str) -> Optional[str]:
+        start = time.perf_counter()
         try:
             response = self.session.get(url, timeout=self.timeout)
             response.raise_for_status()
+            elapsed = time.perf_counter() - start
+            size_kb = len(response.content) / 1024
+            speed_kbps = size_kb / elapsed if elapsed > 0 else 0.0
+            logger.info(
+                f"  Fetched ...{url[-70:]} in {elapsed:.2f}s "
+                f"({size_kb:.1f} KB, {speed_kbps:.1f} KB/s)"
+            )
             return response.text
         except requests.RequestException as e:
-            logger.warning(f"Failed to fetch {url}: {e}")
+            elapsed = time.perf_counter() - start
+            logger.warning(f"Failed to fetch {url} after {elapsed:.2f}s: {e}")
             return None
+
+    def _first_matching_card_url(
+        self,
+        card,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+        seen: set[str],
+        exclude_path: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Return the first href on this card that matches domain/link_contains and
+        isn't a bare listing link, or None if there is no match or it's already
+        in `seen`.
+        """
+        exclude_path = link_contains if exclude_path is None else exclude_path
+        for a in card.find_all("a", href=True):
+            href = a["href"].strip()
+            full_url = urljoin(source_url, href)
+            parsed = urlparse(full_url)
+            if (
+                domain in parsed.netloc
+                and link_contains in parsed.path
+                and parsed.path not in ("", "/", exclude_path)
+                and not parsed.fragment
+            ):
+                clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                return None if clean_url in seen else clean_url
+        return None
+
+    _PAGE_PARAM_RE = re.compile(r'([?&]page=)(\d+)', re.IGNORECASE)
+
+    def _next_page_by_query_param(self, current_url: str) -> str:
+        """Increment '?page=N' in the URL, or append 'page=2' if there's no page param yet."""
+        m = self._PAGE_PARAM_RE.search(current_url)
+        if m:
+            next_page = int(m.group(2)) + 1
+            return self._PAGE_PARAM_RE.sub(rf"\g<1>{next_page}", current_url)
+        sep = "&" if "?" in current_url else "?"
+        return f"{current_url}{sep}page=2"
 
     def _extract_date_from_html(self, html: str) -> Optional[datetime]:
         """Extract publication date from an article page."""
@@ -326,6 +363,7 @@ class WebScraper(ABC):
         max_articles: int = 20,
     ) -> list[str]:
         """Single-page link collection."""
+        start = time.perf_counter()
         html = self._fetch_html(source_url)
         if not html:
             return []
@@ -350,7 +388,38 @@ class WebScraper(ABC):
             if len(links) >= max_articles:
                 break
 
+        elapsed = time.perf_counter() - start
+        speed = len(links) / elapsed if elapsed > 0 else 0.0
+        logger.info(
+            f"Collected {len(links)} links from ...{source_url[-70:]} "
+            f"in {elapsed:.2f}s ({speed:.2f} links/s)"
+        )
         return list(links)
+
+    def _get_first_page_article_links(
+        self,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+        max_articles: int,
+    ) -> list[str]:
+        """Fetch one listing page via `_listing_links_with_dates` and return up to
+        max_articles URLs. Shared by scrapers whose non-date-range collection is
+        just the first page of their dated listing parser."""
+        start = time.perf_counter()
+        html = self._fetch_html(source_url)
+        if not html:
+            return []
+        items = self._listing_links_with_dates(html, source_url, domain, link_contains)
+        result = [url for url, _ in items[:max_articles]]
+
+        elapsed = time.perf_counter() - start
+        speed = len(result) / elapsed if elapsed > 0 else 0.0
+        logger.info(
+            f"Collected {len(result)} links from ...{source_url[-70:]} "
+            f"in {elapsed:.2f}s ({speed:.2f} links/s)"
+        )
+        return result
 
     def get_article_links_in_date_range(
         self,
@@ -368,10 +437,13 @@ class WebScraper(ABC):
         Uses binary search within each page to find the in-range window without
         iterating every card. Stops pagination once all remaining pages are too old.
         """
+        start = time.perf_counter()
         collected: list[str] = []
         current_url = source_url
+        pages_fetched = 0
 
         for page_num in range(1, max_pages + 1):
+            pages_fetched = page_num
             logger.info(f"  [Page {page_num}] Fetching: {current_url}")
             html = self._fetch_html(current_url)
             if not html:
@@ -445,6 +517,12 @@ class WebScraper(ABC):
             current_url = next_url
             time.sleep(self.delay)
 
+        elapsed = time.perf_counter() - start
+        speed = len(collected) / elapsed if elapsed > 0 else 0.0
+        logger.info(
+            f"Date-range scrape complete: {len(collected)} articles across "
+            f"{pages_fetched} page(s) in {elapsed:.2f}s ({speed:.2f} articles/s)"
+        )
         return collected
 
     def extract_article(
@@ -496,21 +574,8 @@ class ETScraper(WebScraper):
         results: list[tuple[str, Optional[datetime]]] = []
 
         for story in soup.find_all("div", class_="eachStory"):
-            url: Optional[str] = None
-            for a in story.find_all("a", href=True):
-                href = a["href"].strip()
-                full_url = urljoin(source_url, href)
-                parsed = urlparse(full_url)
-                if (
-                    domain in parsed.netloc
-                    and link_contains in parsed.path
-                    and parsed.path not in ("", "/", link_contains)
-                    and not parsed.fragment
-                ):
-                    url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-                    break
-
-            if not url or url in seen:
+            url = self._first_matching_card_url(story, source_url, domain, link_contains, seen)
+            if not url:
                 continue
             seen.add(url)
 
@@ -563,21 +628,8 @@ class IndiaInfolineScraper(WebScraper):
         results: list[tuple[str, Optional[datetime]]] = []
 
         for card in soup.find_all("div", class_="Snwhy8"):
-            url: Optional[str] = None
-            for a in card.find_all("a", href=True):
-                href = a["href"].strip()
-                full_url = urljoin(source_url, href)
-                parsed = urlparse(full_url)
-                if (
-                    domain in parsed.netloc
-                    and link_contains in parsed.path
-                    and parsed.path not in ("", "/", link_contains)
-                    and not parsed.fragment
-                ):
-                    url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-                    break
-
-            if not url or url in seen:
+            url = self._first_matching_card_url(card, source_url, domain, link_contains, seen)
+            if not url:
                 continue
             seen.add(url)
 
@@ -592,13 +644,7 @@ class IndiaInfolineScraper(WebScraper):
 
     def _get_next_page_url(self, html: str, current_url: str) -> Optional[str]:
         """IIFL pagination pattern: ?page=N"""
-        page_match = re.search(r'([?&]page=)(\d+)', current_url)
-        if page_match:
-            next_page = int(page_match.group(2)) + 1
-            return re.sub(r'([?&]page=)\d+', rf'\g<1>{next_page}', current_url)
-
-        separator = "&" if "?" in current_url else "?"
-        return f"{current_url}{separator}page=2"
+        return self._next_page_by_query_param(current_url)
 
 
 class LivemintScraper(WebScraper):
@@ -612,8 +658,6 @@ class LivemintScraper(WebScraper):
     full date-range pagination without needing a headless browser.
     """
 
-    _LM_API_PAGE_RE = re.compile(r'([&?]page=)(\d+)', re.IGNORECASE)
-
     def _parse_api_response(
         self,
         text: str,
@@ -622,7 +666,7 @@ class LivemintScraper(WebScraper):
     ) -> list[tuple[str, Optional[datetime]]]:
         """Parse the CMS JSON response and return (url, date) pairs."""
         try:
-            data = __import__("json").loads(text)
+            data = json.loads(text)
         except Exception:
             return []
 
@@ -664,12 +708,12 @@ class LivemintScraper(WebScraper):
         Livemint's listing only exposes ~10 pages of content; page 11+
         loops back to the same recent articles, so we stop there.
         """
-        m = self._LM_API_PAGE_RE.search(current_url)
+        m = self._PAGE_PARAM_RE.search(current_url)
         if m:
             next_page = int(m.group(2)) + 1
             if next_page > 10:
                 return None
-            return self._LM_API_PAGE_RE.sub(rf"\g<1>{next_page}", current_url)
+            return self._PAGE_PARAM_RE.sub(rf"\g<1>{next_page}", current_url)
         return None
 
     def get_article_links(
@@ -680,11 +724,7 @@ class LivemintScraper(WebScraper):
         max_articles: int = 20,
     ) -> list[str]:
         """Fetch first page from the JSON API and return article URLs."""
-        text = self._fetch_html(source_url)
-        if not text:
-            return []
-        items = self._parse_api_response(text, domain, link_contains)
-        return [url for url, _ in items[:max_articles]]
+        return self._get_first_page_article_links(source_url, domain, link_contains, max_articles)
 
 
 class WSJScraper(WebScraper):
@@ -696,8 +736,6 @@ class WSJScraper(WebScraper):
     Article pages expose article:published_time for date extraction.
     """
 
-    _WSJ_PAGE_RE = re.compile(r'([?&]page=)(\d+)', re.IGNORECASE)
-
     def _parse_listing_html(
         self,
         html: str,
@@ -705,14 +743,13 @@ class WSJScraper(WebScraper):
         link_contains: str,
     ) -> list[tuple[str, Optional[datetime]]]:
         """Extract (url, date) pairs from __NEXT_DATA__ moreInArticles list."""
-        import json as _json
         m = re.search(
             r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S
         )
         if not m:
             return []
         try:
-            data = _json.loads(m.group(1))
+            data = json.loads(m.group(1))
             articles = data["props"]["pageProps"]["moreInArticles"]
         except (KeyError, ValueError):
             return []
@@ -754,13 +791,7 @@ class WSJScraper(WebScraper):
 
     def _get_next_page_url(self, html: str, current_url: str) -> Optional[str]:
         """Increment ?page=N in the WSJ listing URL."""
-        m = self._WSJ_PAGE_RE.search(current_url)
-        if m:
-            next_page = int(m.group(2)) + 1
-            return self._WSJ_PAGE_RE.sub(rf"\g<1>{next_page}", current_url)
-        # First page may have no page param — append ?page=2
-        sep = "&" if "?" in current_url else "?"
-        return f"{current_url}{sep}page=2"
+        return self._next_page_by_query_param(current_url)
 
 
 class IndianStartupNewsScraper(WebScraper):
@@ -772,8 +803,6 @@ class IndianStartupNewsScraper(WebScraper):
     Pages:         /funding?page=N.
     Article dates: JSON-LD NewsArticle datePublished/dateModified.
     """
-
-    _ISN_PAGE_RE = re.compile(r'([?&]page=)(\d+)', re.IGNORECASE)
 
     def _listing_links_with_dates(
         self,
@@ -787,25 +816,13 @@ class IndianStartupNewsScraper(WebScraper):
         results: list[tuple[str, Optional[datetime]]] = []
 
         for card in soup.select("div.feat-a-1, div.small-post"):
-            url: Optional[str] = None
-            for a in card.find_all("a", href=True):
-                href = a["href"].strip()
-                full_url = urljoin(source_url, href)
-                parsed = urlparse(full_url)
-                if (
-                    domain in parsed.netloc
-                    and link_contains in parsed.path
-                    and parsed.path not in ("", "/", link_contains.rstrip("/"))
-                    and not parsed.fragment
-                ):
-                    clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-                    if clean_url not in seen:
-                        url = clean_url
-                        seen.add(clean_url)
-                    break
-
+            url = self._first_matching_card_url(
+                card, source_url, domain, link_contains, seen,
+                exclude_path=link_contains.rstrip("/"),
+            )
             if not url:
                 continue
+            seen.add(url)
 
             date: Optional[datetime] = None
             date_span = card.find("span", class_="publish-date")
@@ -820,10 +837,8 @@ class IndianStartupNewsScraper(WebScraper):
 
     def _get_next_page_url(self, html: str, current_url: str) -> Optional[str]:
         """Increment ?page=N for Indian Startup News category pages."""
-        m = self._ISN_PAGE_RE.search(current_url)
-        if m:
-            next_page = int(m.group(2)) + 1
-            return self._ISN_PAGE_RE.sub(rf"\g<1>{next_page}", current_url)
+        if self._PAGE_PARAM_RE.search(current_url):
+            return self._next_page_by_query_param(current_url)
 
         soup = BeautifulSoup(html, "lxml")
         for a in soup.find_all("a", class_="paginate", href=True):
@@ -831,8 +846,7 @@ class IndianStartupNewsScraper(WebScraper):
             if "page 2" in label or a.get_text(strip=True) == "2":
                 return urljoin(current_url, a["href"].strip())
 
-        sep = "&" if "?" in current_url else "?"
-        return f"{current_url}{sep}page=2"
+        return self._next_page_by_query_param(current_url)
 
     def get_article_links(
         self,
@@ -842,11 +856,7 @@ class IndianStartupNewsScraper(WebScraper):
         max_articles: int = 20,
     ) -> list[str]:
         """Fetch first page and return dated Funding Fusion article URLs."""
-        html = self._fetch_html(source_url)
-        if not html:
-            return []
-        items = self._listing_links_with_dates(html, source_url, domain, link_contains)
-        return [url for url, _ in items[:max_articles]]
+        return self._get_first_page_article_links(source_url, domain, link_contains, max_articles)
 
 
 class Inc42Scraper(WebScraper):
@@ -916,11 +926,7 @@ class Inc42Scraper(WebScraper):
         max_articles: int = 20,
     ) -> list[str]:
         """Fetch the homepage and return dated Inc42 article URLs."""
-        html = self._fetch_html(source_url)
-        if not html:
-            return []
-        items = self._listing_links_with_dates(html, source_url, domain, link_contains)
-        return [url for url, _ in items[:max_articles]]
+        return self._get_first_page_article_links(source_url, domain, link_contains, max_articles)
 
 
 class CNBCScraper(WebScraper):
@@ -933,17 +939,13 @@ class CNBCScraper(WebScraper):
     Article dates: article:published_time OG meta tag (UTC ISO 8601)
     """
 
-    _CNBC_PAGE_RE = re.compile(r'([?&]page=)(\d+)', re.IGNORECASE)
     _CNBC_ART_RE = re.compile(r'^/\d{4}/\d{2}/\d{2}/')
     _CNBC_ORD_RE = re.compile(r'(\d+)(st|nd|rd|th)\b', re.IGNORECASE)
 
     def _parse_cnbc_listing_date(self, text: str) -> Optional[datetime]:
         """Parse 'Fri, May 8th 2026' from Card-time span into midnight IST."""
         text = self._CNBC_ORD_RE.sub(r'\1', text).strip()
-        try:
-            return datetime.strptime(text, '%a, %b %d %Y').replace(tzinfo=IST)
-        except ValueError:
-            return None
+        return _try_parse(text, '%a, %b %d %Y')
 
     def _listing_links_with_dates(
         self,
@@ -990,12 +992,7 @@ class CNBCScraper(WebScraper):
 
     def _get_next_page_url(self, html: str, current_url: str) -> Optional[str]:
         """Increment ?page=N in the CNBC listing URL."""
-        m = self._CNBC_PAGE_RE.search(current_url)
-        if m:
-            next_page = int(m.group(2)) + 1
-            return self._CNBC_PAGE_RE.sub(rf"\g<1>{next_page}", current_url)
-        sep = "&" if "?" in current_url else "?"
-        return f"{current_url}{sep}page=2"
+        return self._next_page_by_query_param(current_url)
 
     def get_article_links(
         self,
@@ -1005,11 +1002,7 @@ class CNBCScraper(WebScraper):
         max_articles: int = 20,
     ) -> list[str]:
         """Fetch first page and return non-video article URLs."""
-        html = self._fetch_html(source_url)
-        if not html:
-            return []
-        items = self._listing_links_with_dates(html, source_url, domain, link_contains)
-        return [url for url, _ in items[:max_articles]]
+        return self._get_first_page_article_links(source_url, domain, link_contains, max_articles)
 
 
 class FEScraper(WebScraper):
