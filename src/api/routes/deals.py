@@ -11,7 +11,7 @@ from ...db.queries import Neo4jConnection
 router = APIRouter(prefix="/deals", tags=["deals"])
 
 
-@router.get("", response_model=PaginatedResponse[DealWithArticleResponse])
+@router.get("", response_model=PaginatedResponse[DealWithArticleResponse], response_model_exclude_none=True)
 def list_deals(
     sector: Optional[str] = Query(None, description="Filter by sector (partial match)"),
     deal_type: Optional[str] = Query(None, description="Filter by deal type (partial match)"),

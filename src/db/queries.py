@@ -36,7 +36,8 @@ def _deal_row(record) -> dict:
 
 
 def _deal_row_with_article(record) -> dict:
-    deal = _deal_row(record)
+    deal = dict(record["d"])
+    deal["article_id"] = record["article_id"]
     art = record.get("article")
     deal["article"] = dict(art) if art else None
     return deal
@@ -158,14 +159,9 @@ def list_deals(
             f"""
             MATCH (art:Article)-[:HAS_DEAL]->(d:Deal)
             {where}
-            WITH d, art
+            RETURN d, art.id AS article_id, art AS article
             ORDER BY art.published_at DESC
             SKIP $offset LIMIT $limit
-            OPTIONAL MATCH (c:Company)-[r]->(d)
-            RETURN d, art.id AS article_id, art AS article,
-                   collect(CASE WHEN c IS NOT NULL
-                           THEN {{id: c.id, name: c.name, role: type(r)}}
-                           END) AS companies
             """,
             **params,
             offset=offset,

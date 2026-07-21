@@ -24,6 +24,15 @@ class ArticleDetailResponse(ArticleResponse):
     content: Optional[str] = None
 
 
+class ArticleSummaryResponse(BaseModel):
+    url: str
+    source: str
+    title: Optional[str] = None
+    published_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
 class CompanyInDealResponse(BaseModel):
     id: UUID
     name: str
@@ -61,8 +70,16 @@ class DealResponse(BaseModel):
         return data
 
 
-class DealWithArticleResponse(DealResponse):
-    article: Optional[ArticleResponse] = None
+class DealWithArticleResponse(BaseModel):
+    id: UUID
+    article_id: UUID
+    deal_value: Optional[str] = None
+    sector: Optional[str] = None
+    deal_type: Optional[str] = None
+    summary: Optional[str] = None
+    article: Optional[ArticleSummaryResponse] = None
+
+    model_config = {"from_attributes": True}
 
 
 class SignalEventResponse(BaseModel):
