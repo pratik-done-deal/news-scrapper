@@ -9,6 +9,7 @@ from typing import Optional
 from groq import Groq
 
 from .db.repository import NewsRepository
+from .processor.company_signal import article_similarity
 from .processor.extractor import DealExtractor
 from .processor.filter import NewsFilter
 from .scraper.web_scraper import (
@@ -207,6 +208,18 @@ def _store_batch(batch: list[dict], repo: NewsRepository) -> list[dict]:
     return repo.save_articles_batch(batch)
 
 
+DEDUP_SIMILARITY_THRESHOLD = 0.45
+DEDUP_WINDOW_DAYS = 7
+
+
+def _find_duplicate_article(article: dict, candidates: list[dict]) -> Optional[dict]:
+    """Return the first already-processed article that's a near-duplicate of `article`, if any."""
+    for candidate in candidates:
+        if article_similarity(article, candidate) >= DEDUP_SIMILARITY_THRESHOLD:
+            return candidate
+    return None
+
+
 def _filter_and_extract_articles(
     articles: list[dict],
     repo: NewsRepository,
@@ -220,8 +233,15 @@ def _filter_and_extract_articles(
     and skipped rather than aborting the rest of the list, so a single bad
     article (LLM error, malformed content) can't leave every article behind
     it permanently stuck at is_ma_funding_relevant: null.
+
+    Before running LLM extraction, each relevant article is checked against
+    recently-extracted articles (e.g. the same deal reported by CNBC and
+    another outlet) — a near-duplicate is linked to the existing Deal instead
+    of paying for a second LLM extraction.
     """
     processed = deals = 0
+    duplicate_pool = repo.get_recent_deal_articles(days=DEDUP_WINDOW_DAYS)
+
     for article in articles:
         source_name = article["source_name"]
         title = article["title"]
@@ -246,9 +266,19 @@ def _filter_and_extract_articles(
                 )
                 continue
 
+            duplicate = _find_duplicate_article(article, duplicate_pool)
+            if duplicate:
+                repo.mark_duplicate_article(article_id, duplicate["id"], is_relevant=True)
+                logger.info(
+                    f"  {_tag(STORAGE_LABEL, source_name)}"
+                    f" Duplicate of already-processed article {duplicate['id']}"
+                    f" (deal {duplicate['deal_id']}) — skipping LLM extraction"
+                )
+                continue
+
             deal = extractor.extract(title, content)
             if deal:
-                repo.save_deal(
+                deal_id = repo.save_deal(
                     article_id=article_id,
                     buyer=deal.buyer,      # split into company_deals by repo
                     seller=deal.seller,    # split into company_deals by repo
@@ -260,6 +290,11 @@ def _filter_and_extract_articles(
                     summary=deal.summary,
                 )
                 deals += 1
+                # Extend the in-batch pool so a duplicate of this same article
+                # scraped from another source later in this batch is caught too.
+                duplicate_pool.append(
+                    {"id": article_id, "title": title, "content": content, "deal_id": deal_id}
+                )
                 logger.info(
                     f"  {_tag(STORAGE_LABEL, source_name)} Deal: [{deal.deal_type}]"
                     f" {deal.buyer} / {deal.seller}"

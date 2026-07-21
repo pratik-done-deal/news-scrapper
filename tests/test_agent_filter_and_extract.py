@@ -18,6 +18,7 @@ def _article(article_id: str, **overrides) -> dict:
 
 def test_one_article_failure_does_not_block_the_rest_of_the_batch():
     repo = MagicMock()
+    repo.get_recent_deal_articles.return_value = []
     news_filter = MagicMock()
     extractor = MagicMock()
 
@@ -40,6 +41,7 @@ def test_one_article_failure_does_not_block_the_rest_of_the_batch():
 
 def test_not_relevant_article_is_marked_but_not_extracted():
     repo = MagicMock()
+    repo.get_recent_deal_articles.return_value = []
     news_filter = MagicMock()
     extractor = MagicMock()
     news_filter.is_ma_funding_relevant.return_value = False
@@ -50,3 +52,32 @@ def test_not_relevant_article_is_marked_but_not_extracted():
     assert deals == 0
     repo.mark_ma_funding_relevant.assert_called_once_with("a1", False)
     extractor.extract.assert_not_called()
+
+
+def test_near_duplicate_article_is_linked_instead_of_re_extracted():
+    repo = MagicMock()
+    repo.get_recent_deal_articles.return_value = [
+        {
+            "id": "canonical-1",
+            "title": "Acme acquires Target Co in $1M deal",
+            "content": "Acme announced today it will acquire Target Co for $1M in cash.",
+            "deal_id": "deal-1",
+        }
+    ]
+    news_filter = MagicMock()
+    news_filter.is_ma_funding_relevant.return_value = True
+    extractor = MagicMock()
+
+    duplicate_article = _article(
+        "a2",
+        source_name="cnbc",
+        title="Acme acquires Target Co in $1M deal",
+        content="Acme announced today it will acquire Target Co for $1M in cash.",
+    )
+
+    processed, deals = _filter_and_extract_articles([duplicate_article], repo, news_filter, extractor)
+
+    assert processed == 1
+    assert deals == 0
+    extractor.extract.assert_not_called()
+    repo.mark_duplicate_article.assert_called_once_with("a2", "canonical-1", is_relevant=True)

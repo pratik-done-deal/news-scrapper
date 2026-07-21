@@ -2,7 +2,7 @@ import hashlib
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 # Legal entity suffixes to strip before company name comparison/storage.
@@ -229,6 +229,52 @@ class NewsRepository:
                 rel=is_relevant,
             )
 
+    def get_recent_deal_articles(self, days: int = 7) -> list[dict]:
+        """
+        Fetch canonical (non-duplicate) articles that already produced a Deal,
+        scraped within the last `days` days.
+
+        Used as the comparison pool for cross-source duplicate detection
+        (e.g. the same deal covered by CNBC and another outlet) so a
+        near-duplicate article can be linked to the existing Deal instead of
+        re-running LLM extraction on it.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        with self._session() as session:
+            result = session.run(
+                """
+                MATCH (a:Article)-[:HAS_DEAL]->(d:Deal)
+                WHERE a.is_processed = true
+                  AND a.duplicate_of IS NULL
+                  AND a.scraped_at >= $cutoff
+                RETURN a.id AS id, a.title AS title, a.content AS content, d.id AS deal_id
+                """,
+                cutoff=cutoff,
+            )
+            return [dict(record) for record in result]
+
+    def mark_duplicate_article(self, article_id, canonical_article_id, is_relevant: bool = True) -> None:
+        """
+        Mark an article as a near-duplicate of an already-processed canonical
+        article instead of running LLM extraction on it again. No new Deal
+        node is created — the duplicate is linked to the canonical article
+        for provenance via DUPLICATE_OF.
+        """
+        with self._session() as session:
+            session.run(
+                """
+                MATCH (a:Article {id: $article_id})
+                MATCH (c:Article {id: $canonical_id})
+                SET a.is_processed = true,
+                    a.is_ma_funding_relevant = $is_relevant,
+                    a.duplicate_of = $canonical_id
+                CREATE (a)-[:DUPLICATE_OF]->(c)
+                """,
+                article_id=str(article_id),
+                canonical_id=str(canonical_article_id),
+                is_relevant=is_relevant,
+            )
+
     def save_deal(
         self,
         article_id,
@@ -240,7 +286,7 @@ class NewsRepository:
         country: Optional[str],
         deal_type: Optional[str],
         summary: Optional[str],
-    ) -> None:
+    ) -> str:
         deal_id = str(uuid.uuid4())
         extracted_at = datetime.now(timezone.utc).isoformat()
         buyer_role, seller_role = _roles_for_deal_type(deal_type)
@@ -309,3 +355,4 @@ class NewsRepository:
                 )
 
         logger.debug(f"Deal saved for article {article_id}")
+        return deal_id
