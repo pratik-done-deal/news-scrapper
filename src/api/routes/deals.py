@@ -4,17 +4,18 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..dependencies import get_connection
-from ..schemas import DealResponse, PaginatedResponse
+from ..schemas import DealResponse, DealWithArticleResponse, PaginatedResponse
 from ...db import queries
 from ...db.queries import Neo4jConnection
 
 router = APIRouter(prefix="/deals", tags=["deals"])
 
 
-@router.get("", response_model=PaginatedResponse[DealResponse])
+@router.get("", response_model=PaginatedResponse[DealWithArticleResponse])
 def list_deals(
     sector: Optional[str] = Query(None, description="Filter by sector (partial match)"),
     deal_type: Optional[str] = Query(None, description="Filter by deal type (partial match)"),
+    days: Optional[int] = Query(None, ge=1, description="Only deals from articles published in the last N days"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     conn: Neo4jConnection = Depends(get_connection),
@@ -24,6 +25,7 @@ def list_deals(
         conn,
         sector=sector,
         deal_type=deal_type,
+        days=days,
         offset=offset,
         limit=page_size,
     )

@@ -125,6 +125,7 @@ def list_deals(
     conn: Neo4jConnection,
     sector: Optional[str] = None,
     deal_type: Optional[str] = None,
+    days: Optional[int] = None,
     offset: int = 0,
     limit: int = 20,
 ) -> tuple[int, list[dict]]:
@@ -137,23 +138,31 @@ def list_deals(
     if deal_type:
         conditions.append("toLower(d.deal_type) CONTAINS toLower($deal_type)")
         params["deal_type"] = deal_type
+    if days is not None:
+        conditions.append("art.published_at >= $cutoff")
+        params["cutoff"] = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
     with conn.session() as session:
         total = session.run(
-            f"MATCH (d:Deal) {where} RETURN count(d) AS total", **params
+            f"""
+            MATCH (art:Article)-[:HAS_DEAL]->(d:Deal)
+            {where}
+            RETURN count(d) AS total
+            """,
+            **params,
         ).single()["total"]
 
         result = session.run(
             f"""
             MATCH (art:Article)-[:HAS_DEAL]->(d:Deal)
             {where}
-            WITH d, art.id AS article_id
-            ORDER BY d.extracted_at DESC
+            WITH d, art
+            ORDER BY art.published_at DESC
             SKIP $offset LIMIT $limit
             OPTIONAL MATCH (c:Company)-[r]->(d)
-            RETURN d, article_id,
+            RETURN d, art.id AS article_id, art AS article,
                    collect(CASE WHEN c IS NOT NULL
                            THEN {{id: c.id, name: c.name, role: type(r)}}
                            END) AS companies
@@ -162,7 +171,7 @@ def list_deals(
             offset=offset,
             limit=limit,
         )
-        items = [_deal_row(record) for record in result]
+        items = [_deal_row_with_article(record) for record in result]
 
     return total, items
 
