@@ -2,6 +2,7 @@ SCHEMA_CONSTRAINTS = [
     "CREATE CONSTRAINT article_id IF NOT EXISTS FOR (a:Article) REQUIRE a.id IS UNIQUE",
     "CREATE CONSTRAINT article_url IF NOT EXISTS FOR (a:Article) REQUIRE a.url IS UNIQUE",
     "CREATE CONSTRAINT deal_id IF NOT EXISTS FOR (d:Deal) REQUIRE d.id IS UNIQUE",
+    "CREATE CONSTRAINT deal_article_id IF NOT EXISTS FOR (d:Deal) REQUIRE d.article_id IS UNIQUE",
     "CREATE CONSTRAINT company_name IF NOT EXISTS FOR (c:Company) REQUIRE c.name IS UNIQUE",
     "CREATE CONSTRAINT company_signal_id IF NOT EXISTS FOR (s:CompanySignal) REQUIRE s.id IS UNIQUE",
 ]

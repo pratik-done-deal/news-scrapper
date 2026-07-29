@@ -287,30 +287,35 @@ class NewsRepository:
         deal_type: Optional[str],
         summary: Optional[str],
     ) -> str:
-        deal_id = str(uuid.uuid4())
+        new_deal_id = str(uuid.uuid4())
         extracted_at = datetime.now(timezone.utc).isoformat()
         buyer_role, seller_role = _roles_for_deal_type(deal_type)
 
         with self._session() as session:
-            # Mark article processed and create the Deal node linked to the Article
-            session.run(
+            # MERGE keyed on the (uniquely constrained) article_id: if two
+            # extraction runs race on the same article, Neo4j serializes the
+            # concurrent MERGEs so only one Deal node is ever created for it —
+            # the second call matches the already-created node instead of
+            # inserting a duplicate.
+            record = session.run(
                 """
                 MATCH (a:Article {id: $article_id})
+                MERGE (d:Deal {article_id: $article_id})
+                ON CREATE SET
+                    d.id           = $new_deal_id,
+                    d.deal_value   = $deal_value,
+                    d.sector       = $sector,
+                    d.sub_sector   = $sub_sector,
+                    d.country      = $country,
+                    d.deal_type    = $deal_type,
+                    d.summary      = $summary,
+                    d.extracted_at = $extracted_at
+                MERGE (a)-[:HAS_DEAL]->(d)
                 SET a.is_processed = true
-                CREATE (d:Deal {
-                    id:           $deal_id,
-                    deal_value:   $deal_value,
-                    sector:       $sector,
-                    sub_sector:   $sub_sector,
-                    country:      $country,
-                    deal_type:    $deal_type,
-                    summary:      $summary,
-                    extracted_at: $extracted_at
-                })
-                CREATE (a)-[:HAS_DEAL]->(d)
+                RETURN d.id AS deal_id
                 """,
                 article_id=str(article_id),
-                deal_id=deal_id,
+                new_deal_id=new_deal_id,
                 deal_value=deal_value,
                 sector=sector,
                 sub_sector=sub_sector,
@@ -318,7 +323,8 @@ class NewsRepository:
                 deal_type=deal_type,
                 summary=summary,
                 extracted_at=extracted_at,
-            )
+            ).single()
+            deal_id = record["deal_id"]
 
             # Create Company nodes and relationships for buyers
             buyer_rel = _ROLE_TO_REL[buyer_role]
@@ -330,7 +336,7 @@ class NewsRepository:
                     ON CREATE SET c.id = $company_id
                     WITH c
                     MATCH (d:Deal {{id: $deal_id}})
-                    CREATE (c)-[:{buyer_rel}]->(d)
+                    MERGE (c)-[:{buyer_rel}]->(d)
                     """,
                     name=canonical,
                     company_id=_company_id(canonical),
@@ -347,7 +353,7 @@ class NewsRepository:
                     ON CREATE SET c.id = $company_id
                     WITH c
                     MATCH (d:Deal {{id: $deal_id}})
-                    CREATE (c)-[:{seller_rel}]->(d)
+                    MERGE (c)-[:{seller_rel}]->(d)
                     """,
                     name=canonical,
                     company_id=_company_id(canonical),
