@@ -859,6 +859,78 @@ class IndianStartupNewsScraper(WebScraper):
         return self._get_first_page_article_links(source_url, domain, link_contains, max_articles)
 
 
+class EntrackrScraper(WebScraper):
+    """
+    WebScraper for Entrackr's /news listing pages.
+
+    Article cards: div.post-collection, each wrapping one div.small-post
+                   with a link to /news/<slug>-<id>.
+    Date:          span.publish-date, e.g. "Jul 21, 2026 10:27 IST"
+                   (reuses the Indian Startup News date format/parser —
+                   both sites run the same Quintype-style CMS template).
+    Pages:         /news?page=N, discovered via a.paginate anchors.
+    Article dates: JSON-LD NewsArticle datePublished (handled generically
+                   by the base class's _extract_date_from_html).
+    Article body:  trafilatura's default extraction is clean on Entrackr's
+                   template, so no content-selector override is needed here
+                   (unlike Inc42).
+    """
+
+    def _listing_links_with_dates(
+        self,
+        html: str,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+    ) -> list[tuple[str, Optional[datetime]]]:
+        soup = BeautifulSoup(html, "lxml")
+        seen: set[str] = set()
+        results: list[tuple[str, Optional[datetime]]] = []
+
+        for card in soup.select("div.post-collection"):
+            url = self._first_matching_card_url(
+                card, source_url, domain, link_contains, seen,
+                exclude_path=link_contains.rstrip("/"),
+            )
+            if not url:
+                continue
+            seen.add(url)
+
+            date: Optional[datetime] = None
+            date_span = card.find("span", class_="publish-date")
+            if date_span:
+                date = _parse_isn_listing_date(date_span.get_text(" ", strip=True))
+
+            if date is None:
+                continue  # skip undated cards — binary search requires all dates present
+            results.append((url, date))
+
+        return results
+
+    def _get_next_page_url(self, html: str, current_url: str) -> Optional[str]:
+        """Increment ?page=N for Entrackr's /news listing."""
+        if self._PAGE_PARAM_RE.search(current_url):
+            return self._next_page_by_query_param(current_url)
+
+        soup = BeautifulSoup(html, "lxml")
+        for a in soup.find_all("a", class_="paginate", href=True):
+            label = a.get("aria-label", "").lower()
+            if "page 2" in label or a.get_text(strip=True) == "2":
+                return urljoin(current_url, a["href"].strip())
+
+        return self._next_page_by_query_param(current_url)
+
+    def get_article_links(
+        self,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+        max_articles: int = 20,
+    ) -> list[str]:
+        """Fetch the first page and return dated Entrackr article URLs."""
+        return self._get_first_page_article_links(source_url, domain, link_contains, max_articles)
+
+
 class Inc42Scraper(WebScraper):
     """
     WebScraper for Inc42 homepage article cards.
@@ -927,6 +999,43 @@ class Inc42Scraper(WebScraper):
     ) -> list[str]:
         """Fetch the homepage and return dated Inc42 article URLs."""
         return self._get_first_page_article_links(source_url, domain, link_contains, max_articles)
+
+    def extract_article(
+        self, url: str
+    ) -> tuple[Optional[str], Optional[str], Optional[datetime]]:
+        """
+        Fetch and return (title, content, published_date) for an Inc42 article.
+
+        trafilatura's boilerplate-removal heuristic misfires on Inc42's page
+        template — it grabs sidebar course-promo blocks (D2CX, ManagementX, ...)
+        instead of the actual article body, so this overrides the base
+        trafilatura-based extraction with Inc42's own `div.single-post-content`
+        container, which holds exactly the article text and nothing else.
+        """
+        time.sleep(self.delay)
+        html = self._fetch_html(url)
+        if not html:
+            return None, None, None
+
+        soup = BeautifulSoup(html, "lxml")
+
+        content_div = soup.select_one("div.single-post-content")
+        content = content_div.get_text(" ", strip=True) if content_div else None
+        if not content:
+            content = trafilatura.extract(
+                html, include_comments=False, include_tables=False, no_fallback=False
+            )
+
+        title_tag = soup.find("h1") or soup.find("title")
+        title = title_tag.get_text(strip=True) if title_tag else None
+
+        published_date = self._extract_date_from_html(html)
+        if published_date:
+            logger.info(f"  Extracted date: {published_date.strftime('%Y-%m-%d %I:%M %p IST')} | {url[-70:]}")
+        else:
+            logger.warning(f"  Could not extract date from article: {url[-70:]}")
+
+        return title, content, published_date
 
 
 class CNBCScraper(WebScraper):

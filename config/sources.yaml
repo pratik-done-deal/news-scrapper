@@ -30,6 +30,14 @@ sources:
     scraper: inc42
     paginate: false
 
+  - name: Entrackr News
+    url: https://entrackr.com/news
+    domain: entrackr.com
+    link_contains: /news/
+    scraper: entrackr
+    paginate: true
+    max_pages: 20
+
   # - name: Moneycontrol Business
   #   url: https://www.moneycontrol.com/news/business/
   #   domain: moneycontrol.com

@@ -14,6 +14,7 @@ from .processor.extractor import DealExtractor
 from .processor.filter import NewsFilter
 from .scraper.web_scraper import (
     CNBCScraper,
+    EntrackrScraper,
     ETScraper,
     FEScraper,
     Inc42Scraper,
@@ -29,6 +30,7 @@ SCRAPER_REGISTRY: dict[str, type[WebScraper]] = {
     "iifl": IndiaInfolineScraper,
     "isn": IndianStartupNewsScraper,
     "inc42": Inc42Scraper,
+    "entrackr": EntrackrScraper,
 }
 
 logger = logging.getLogger(__name__)
@@ -277,7 +279,12 @@ def _filter_and_extract_articles(
                 continue
 
             deal = extractor.extract(title, content)
-            if deal:
+            # extractor.extract() returns a DealData with all-null fields (rather
+            # than None) when the LLM decides the article isn't about a single
+            # concrete deal (e.g. weekly funding roundups/trackers that merely
+            # mention deal keywords) — skip saving in that case so we don't
+            # create empty Deal nodes.
+            if deal and deal.summary:
                 deal_id = repo.save_deal(
                     article_id=article_id,
                     buyer=deal.buyer,      # split into company_deals by repo
