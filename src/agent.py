@@ -89,8 +89,26 @@ def _scrape_links(
     max_articles: int,
     dt_start: Optional[datetime],
     dt_end: Optional[datetime],
+    company: Optional[str] = None,
 ) -> list[str]:
-    """Collect article URLs for one source without fetching article content."""
+    """Collect article URLs for one source without fetching article content.
+
+    When `company` is given, the source's on-site search (`search_url`) is used
+    instead of its section listing, pulling that company's news from the site's
+    archive. Date-range pagination still applies when both dates and
+    `paginate: true` are set.
+    """
+    if company:
+        return scraper.get_company_article_links(
+            search_url=source["search_url"],
+            domain=source["domain"],
+            link_contains=source["link_contains"],
+            company=company,
+            start_date=dt_start if source.get("paginate", False) else None,
+            end_date=dt_end if source.get("paginate", False) else None,
+            max_pages=source.get("max_pages", 10),
+            max_articles=max_articles,
+        )
     use_date_range = dt_start and dt_end and source.get("paginate", False)
     if use_date_range:
         return scraper.get_article_links_in_date_range(
@@ -116,6 +134,7 @@ def _scrape_source_worker(
     scraper_kwargs: dict,
     max_articles: int,
     db_config: ScraperDBConfig,
+    company: Optional[str] = None,
 ) -> dict:
     """
     Runs in its own process. Scrapes one source fully, keeping the articles in
@@ -126,7 +145,8 @@ def _scrape_source_worker(
     _ensure_worker_logging()
     source_name = source["name"]
     process = multiprocessing.current_process().name
-    logger.info(f"{_tag(SCRAPER_LABEL, process)} Starting scrape for [{source_name}]")
+    scope = f" (company='{company}')" if company else ""
+    logger.info(f"{_tag(SCRAPER_LABEL, process)} Starting scrape for [{source_name}]{scope}")
 
     try:
         scraper_type = source.get("scraper", "et")
@@ -140,7 +160,7 @@ def _scrape_source_worker(
             ensure_schema=False,
         )
 
-        links = _scrape_links(scraper, source, max_articles, dt_start, dt_end)
+        links = _scrape_links(scraper, source, max_articles, dt_start, dt_end, company)
         logger.info(f"  {_tag(SCRAPER_LABEL, source_name)} Found {len(links)} links")
 
         articles: list[dict] = []
@@ -372,6 +392,7 @@ class NewsAgent:
         dt_start: Optional[datetime],
         dt_end: Optional[datetime],
         counters: dict,
+        company: Optional[str] = None,
     ) -> tuple[int, list[dict]]:
         """
         Run one scrape worker process per source concurrently and collect
@@ -386,7 +407,7 @@ class NewsAgent:
                 executor.submit(
                     _scrape_source_worker,
                     source, dt_start, dt_end, self._scraper_kwargs,
-                    self.max_articles, self.db_config,
+                    self.max_articles, self.db_config, company,
                 ): source["name"]
                 for source in sources
             }
@@ -457,6 +478,66 @@ class NewsAgent:
         )
         if counters["errors"]:
             logger.error(f"Scrape cycle completed with errors: {counters['errors']}")
+        return counters
+
+    def scrape_company(
+        self,
+        company: str,
+        sources: list[dict],
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> dict:
+        """
+        Scrape a single company's news from every source that supports on-site
+        search (`search_url`), store the results, then filter/extract deals over
+        everything currently pending — end-to-end, mirroring `run` but scoped to
+        one company. Sources without a `search_url` are skipped (logged).
+        """
+        searchable = [s for s in sources if s.get("search_url")]
+        skipped = [s["name"] for s in sources if not s.get("search_url")]
+        if skipped:
+            logger.info(
+                f"Company scrape '{company}': skipping {len(skipped)} source(s)"
+                f" without search_url: {', '.join(skipped)}"
+            )
+
+        dt_start, dt_end = self._resolve_date_range(start_date, end_date)
+        counters = {"company": company, "scraped": 0, "new": 0, "deals": 0, "errors": []}
+
+        if not searchable:
+            logger.warning(f"Company scrape '{company}': no searchable sources configured")
+            counters["errors"].append("no sources with search_url configured")
+            return counters
+
+        logger.info(
+            f"Company scrape '{company}' started — {len(searchable)} searchable source(s)"
+        )
+
+        total_scraped, all_articles = self._scrape_all_sources(
+            searchable, dt_start, dt_end, counters, company=company
+        )
+        counters["scraped"] = total_scraped
+
+        for i in range(0, len(all_articles), self.batch_size):
+            batch = all_articles[i:i + self.batch_size]
+            batch_num = i // self.batch_size
+            try:
+                inserted = _store_batch(batch, self.repo)
+                counters["new"] += len(inserted)
+            except Exception as exc:
+                logger.exception(f"{_tag(STORAGE_LABEL)} Batch {batch_num} store failed")
+                counters["errors"].append(f"batch {batch_num}: {exc!r}")
+
+        extract_counters = self.extract_pending(limit=None)
+        counters["deals"] = extract_counters["deals"]
+        counters["errors"].extend(extract_counters["errors"])
+
+        logger.info(
+            f"Company scrape '{company}' complete — scraped: {counters['scraped']},"
+            f" new: {counters['new']}, deals: {counters['deals']}"
+        )
+        if counters["errors"]:
+            logger.error(f"Company scrape '{company}' completed with errors: {counters['errors']}")
         return counters
 
     def extract_pending(self, limit: Optional[int] = None) -> dict:

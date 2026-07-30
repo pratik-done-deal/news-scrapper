@@ -142,6 +142,28 @@ class ScrapeRequest(BaseModel):
         return v
 
 
+class CompanyScrapeRequest(BaseModel):
+    company: str = Field(..., min_length=1, description="Company name to search each source for")
+    sources: Optional[list[str]] = Field(
+        None, description="Restrict to these source names; omit to use all searchable sources"
+    )
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def validate_date_format(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            datetime.strptime(v, "%Y-%m-%d")
+        return v
+
+    @model_validator(mode="after")
+    def validate_date_pair(self) -> "CompanyScrapeRequest":
+        if bool(self.start_date) != bool(self.end_date):
+            raise ValueError("start_date and end_date must be provided together")
+        return self
+
+
 class ExtractRequest(BaseModel):
     limit: Optional[int] = None
 

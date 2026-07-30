@@ -5,7 +5,7 @@ import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote_plus, urljoin, urlparse
 
 import requests
 import trafilatura
@@ -402,15 +402,19 @@ class WebScraper(ABC):
         domain: str,
         link_contains: str,
         max_articles: int,
+        parser=None,
     ) -> list[str]:
-        """Fetch one listing page via `_listing_links_with_dates` and return up to
-        max_articles URLs. Shared by scrapers whose non-date-range collection is
-        just the first page of their dated listing parser."""
+        """Fetch one listing page via `parser` (default `_listing_links_with_dates`)
+        and return up to max_articles URLs. Shared by scrapers whose non-date-range
+        collection is just the first page of their dated listing parser. `parser`
+        lets callers reuse this pagination with a different card parser (e.g. a
+        source's on-site search results template)."""
+        parser = parser or self._listing_links_with_dates
         start = time.perf_counter()
         html = self._fetch_html(source_url)
         if not html:
             return []
-        items = self._listing_links_with_dates(html, source_url, domain, link_contains)
+        items = parser(html, source_url, domain, link_contains)
         result = [url for url, _ in items[:max_articles]]
 
         elapsed = time.perf_counter() - start
@@ -429,6 +433,7 @@ class WebScraper(ABC):
         start_date: datetime,
         end_date: datetime,
         max_pages: int = 10,
+        parser=None,
     ) -> list[str]:
         """
         Paginate through listing pages and collect article URLs whose listing-page
@@ -436,7 +441,13 @@ class WebScraper(ABC):
 
         Uses binary search within each page to find the in-range window without
         iterating every card. Stops pagination once all remaining pages are too old.
+
+        `parser` (default `_listing_links_with_dates`) lets callers reuse this
+        date-range pagination with a different card parser, e.g. a source's
+        on-site search results template. It must, like the default, return
+        (url, date) pairs in descending-date order.
         """
+        parser = parser or self._listing_links_with_dates
         start = time.perf_counter()
         collected: list[str] = []
         current_url = source_url
@@ -450,7 +461,7 @@ class WebScraper(ABC):
                 logger.warning(f"  [Page {page_num}] Failed to fetch, stopping")
                 break
 
-            items = self._listing_links_with_dates(html, source_url, domain, link_contains)
+            items = parser(html, source_url, domain, link_contains)
             if not items:
                 logger.info(f"  [Page {page_num}] No article cards found, stopping")
                 break
@@ -525,6 +536,49 @@ class WebScraper(ABC):
         )
         return collected
 
+    def _build_search_url(self, search_url: str, company: str) -> str:
+        """Fill a source's `search_url` template with the URL-encoded company name.
+
+        The template must contain a `{query}` placeholder, e.g.
+        'https://entrackr.com/?s={query}'.
+        """
+        return search_url.format(query=quote_plus(company))
+
+    def get_company_article_links(
+        self,
+        search_url: str,
+        domain: str,
+        link_contains: str,
+        company: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        max_pages: int = 10,
+        max_articles: int = 20,
+    ) -> list[str]:
+        """
+        Collect article URLs for `company` from this source's on-site search.
+
+        Search-results pages on most of these CMS-driven sites reuse the same
+        card markup as their section listing pages, so this delegates to the
+        existing `_listing_links_with_dates`/`_get_next_page_url` parsers with
+        the search URL standing in for the listing URL. Sources whose search
+        markup differs override this method (same pattern as `get_article_links`).
+        """
+        query_url = self._build_search_url(search_url, company)
+        logger.info(f"  Company search URL for '{company}': {query_url}")
+        if start_date and end_date:
+            return self.get_article_links_in_date_range(
+                source_url=query_url,
+                domain=domain,
+                link_contains=link_contains,
+                start_date=start_date,
+                end_date=end_date,
+                max_pages=max_pages,
+            )
+        return self._get_first_page_article_links(
+            query_url, domain, link_contains, max_articles
+        )
+
     def extract_article(
         self, url: str
     ) -> tuple[Optional[str], Optional[str], Optional[datetime]]:
@@ -553,6 +607,105 @@ class WebScraper(ABC):
             logger.warning(f"  Could not extract date from article: {url[-70:]}")
 
         return title, content, published_date
+
+
+class QuintypeSearchMixin:
+    """
+    Shared on-site search for Quintype JEG-theme sites (Entrackr and Indian
+    Startup News), used by the company-scrape feature.
+
+    Their /search?title=<query> results share a single template that differs
+    from each site's section-listing markup:
+      - result cards are <div class="search_post_div"> (inside div.bigTileArticles),
+      - every result links to /news/<slug>-<id> — even on Indian Startup News,
+        whose funding listing uses /funding/ — so search always matches on /news/,
+      - the card's trailing text carries the date, e.g. "24 Jul 2026",
+      - results are date-descending, and pagination is ?page=N&title=<query>.
+
+    Because the results are pre-sorted by date, this reuses the base class's
+    binary-search date-range pagination via the `parser` hook rather than
+    reimplementing it.
+    """
+
+    _SEARCH_LINK_CONTAINS = "/news/"
+    _SEARCH_ARTICLE_RE = re.compile(r'-\d{5,}$')
+    _SEARCH_DATE_RE = re.compile(r'(\d{1,2}\s+\w{3}\s+\d{4})')
+
+    def _search_links_with_dates(
+        self,
+        html: str,
+        source_url: str,
+        domain: str,
+        link_contains: str,
+    ) -> list[tuple[str, Optional[datetime]]]:
+        """Parse Quintype search-results cards into (url, date) pairs.
+
+        `link_contains` is accepted for parser-signature compatibility but the
+        search template always links articles under /news/, so that is what's
+        matched here regardless of the source's listing `link_contains`.
+        """
+        soup = BeautifulSoup(html, "lxml")
+        seen: set[str] = set()
+        results: list[tuple[str, Optional[datetime]]] = []
+
+        for card in soup.find_all("div", class_="search_post_div"):
+            url: Optional[str] = None
+            for a in card.find_all("a", href=True):
+                full_url = urljoin(source_url, a["href"].strip())
+                parsed = urlparse(full_url)
+                if domain not in parsed.netloc:
+                    continue
+                if self._SEARCH_LINK_CONTAINS not in parsed.path:
+                    continue
+                if not self._SEARCH_ARTICLE_RE.search(parsed.path):
+                    continue
+                clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                if clean_url not in seen:
+                    url = clean_url
+                    seen.add(clean_url)
+                    break
+
+            if not url:
+                continue  # search header card / non-article card
+
+            date: Optional[datetime] = None
+            m = self._SEARCH_DATE_RE.search(card.get_text(" ", strip=True))
+            if m:
+                date = _try_parse(m.group(1), '%d %b %Y')
+
+            if date is None:
+                continue  # skip undated cards — binary search requires all dates present
+            results.append((url, date))
+
+        return results
+
+    def get_company_article_links(
+        self,
+        search_url: str,
+        domain: str,
+        link_contains: str,
+        company: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        max_pages: int = 10,
+        max_articles: int = 20,
+    ) -> list[str]:
+        query_url = self._build_search_url(search_url, company)
+        logger.info(f"  Company search URL for '{company}': {query_url}")
+        if start_date and end_date:
+            return self.get_article_links_in_date_range(
+                source_url=query_url,
+                domain=domain,
+                link_contains=self._SEARCH_LINK_CONTAINS,
+                start_date=start_date,
+                end_date=end_date,
+                max_pages=max_pages,
+                parser=self._search_links_with_dates,
+            )
+        return self._get_first_page_article_links(
+            query_url, domain, self._SEARCH_LINK_CONTAINS, max_articles,
+            parser=self._search_links_with_dates,
+        )
 
 
 class ETScraper(WebScraper):
@@ -794,7 +947,7 @@ class WSJScraper(WebScraper):
         return self._next_page_by_query_param(current_url)
 
 
-class IndianStartupNewsScraper(WebScraper):
+class IndianStartupNewsScraper(QuintypeSearchMixin, WebScraper):
     """
     WebScraper for Indian Startup News Funding Fusion listing pages.
 
@@ -859,7 +1012,7 @@ class IndianStartupNewsScraper(WebScraper):
         return self._get_first_page_article_links(source_url, domain, link_contains, max_articles)
 
 
-class EntrackrScraper(WebScraper):
+class EntrackrScraper(QuintypeSearchMixin, WebScraper):
     """
     WebScraper for Entrackr's /news listing pages.
 

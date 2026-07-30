@@ -17,6 +17,8 @@ sources:
 
   - name: Indian Startup News Funding
     url: https://indianstartupnews.com/funding
+    # Company-scrape search endpoint; {query} is filled with the URL-encoded company name.
+    search_url: https://indianstartupnews.com/search?title={query}
     domain: indianstartupnews.com
     link_contains: /funding/
     scraper: isn
@@ -32,6 +34,7 @@ sources:
 
   - name: Entrackr News
     url: https://entrackr.com/news
+    search_url: https://entrackr.com/search?title={query}
     domain: entrackr.com
     link_contains: /news/
     scraper: entrackr
