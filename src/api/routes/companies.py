@@ -8,7 +8,6 @@ from groq import Groq
 
 from ..dependencies import get_connection
 from ..schemas import (
-    ArticleResponse,
     CompanySignalResponse,
     DealWithArticleResponse,
     PaginatedResponse,
@@ -32,7 +31,11 @@ def search_deals_by_company_name(
     return PaginatedResponse(total=total, page=page, page_size=page_size, items=items)
 
 
-@router.get("/search/news", response_model=PaginatedResponse[ArticleResponse])
+@router.get(
+    "/search/news",
+    response_model=PaginatedResponse[DealWithArticleResponse],
+    response_model_exclude_none=True,
+)
 def search_news_by_company_name(
     name: str = Query(..., min_length=1, description="Company name to search news for"),
     date_from: Optional[date] = Query(None, description="Published on or after (YYYY-MM-DD)"),
@@ -43,10 +46,11 @@ def search_news_by_company_name(
 ):
     """A company's news, sourced from the deals it takes part in, newest first.
 
-    Returns the articles behind the company's deals (and their cross-source
-    duplicates) via the Company->Deal<-Article graph, so results are precise and
-    already relevance-filtered. Articles that only mention the company in passing
-    are excluded. Use /companies/search/deals for the structured deal records.
+    Returns the deals behind the company (via the Company->Deal<-Article graph),
+    each carrying its source article — the same DealWithArticleResponse shape as
+    GET /deals, scoped to one company and ordered by article publish date. Deals
+    are precise and already relevance-filtered; companies mentioned only in
+    passing are excluded because they never produced such a deal link.
     """
     offset = (page - 1) * page_size
     total, items = queries.search_articles_by_company_name(

@@ -126,55 +126,54 @@ def search_articles_by_company_name(
     offset: int = 0,
     limit: int = 20,
 ) -> tuple[int, list[dict]]:
-    """Return a company's news, sourced from its deals, newest first.
+    """Return a company's news as deal rows (deal + source article), newest first.
 
     Traverses the deal graph the extractor already built:
 
         (Company)-[:BOUGHT|SOLD|INVESTED_IN|INVOLVED_IN]->(Deal)<-[:HAS_DEAL]-(Article)
 
-    so results are exactly the articles behind the deals the company takes part
-    in — precise and already filtered for relevance — plus any cross-source
-    duplicate articles of those same deals. Articles that merely mention the
-    company in passing are excluded because they never produced such a deal link.
+    so results are exactly the deals the company takes part in — precise and
+    already filtered for relevance — each carrying the article it was extracted
+    from. The rows share the shape of GET /deals (DealWithArticleResponse), just
+    scoped to one company and orderable by article publish date. Companies that
+    merely get mentioned in passing are excluded because they never produced such
+    a deal link.
     """
-    # `name` filters the company; date filters apply to the resolved article.
-    art_conditions: list[str] = []
+    # `name` filters the company; date filters apply to the source article.
+    conditions = ["toLower(c.name) CONTAINS toLower($name)"]
     params: dict = {"name": name}
     if date_from:
         params["date_from"] = datetime.combine(date_from, time.min).replace(tzinfo=timezone.utc).isoformat()
-        art_conditions.append("a.published_at >= $date_from")
+        conditions.append("art.published_at >= $date_from")
     if date_to:
         params["date_to"] = datetime.combine(date_to, time(23, 59, 59)).replace(tzinfo=timezone.utc).isoformat()
-        art_conditions.append("a.published_at <= $date_to")
-    art_where = ("WHERE " + " AND ".join(art_conditions)) if art_conditions else ""
+        conditions.append("art.published_at <= $date_to")
+    where = "WHERE " + " AND ".join(conditions)
 
-    match_clause = """
-        MATCH (c:Company)-[:BOUGHT|SOLD|INVESTED_IN|INVOLVED_IN]->(:Deal)<-[:HAS_DEAL]-(canon:Article)
-        WHERE toLower(c.name) CONTAINS toLower($name)
-        OPTIONAL MATCH (dup:Article)-[:DUPLICATE_OF]->(canon)
-        WITH collect(DISTINCT canon) + collect(DISTINCT dup) AS arts
-        UNWIND arts AS a
-        WITH DISTINCT a
-    """
+    match_clause = (
+        "MATCH (c:Company)-[:BOUGHT|SOLD|INVESTED_IN|INVOLVED_IN]->(d:Deal)"
+        "<-[:HAS_DEAL]-(art:Article)"
+    )
 
     with conn.session() as session:
         total = session.run(
-            f"{match_clause} {art_where} RETURN count(a) AS total", **params
+            f"{match_clause} {where} RETURN count(DISTINCT d) AS total", **params
         ).single()["total"]
 
         result = session.run(
             f"""
             {match_clause}
-            {art_where}
-            RETURN a
-            ORDER BY a.published_at DESC
+            {where}
+            WITH DISTINCT d, art
+            RETURN d, art.id AS article_id, art AS article
+            ORDER BY art.published_at DESC
             SKIP $offset LIMIT $limit
             """,
             **params,
             offset=offset,
             limit=limit,
         )
-        items = [dict(record["a"]) for record in result]
+        items = [_deal_row_with_article(record) for record in result]
 
     return total, items
 
