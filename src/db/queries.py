@@ -118,6 +118,67 @@ def get_article(conn: Neo4jConnection, article_id: UUID) -> Optional[dict]:
         return dict(record["a"]) if record else None
 
 
+def search_articles_by_company_name(
+    conn: Neo4jConnection,
+    name: str,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    offset: int = 0,
+    limit: int = 20,
+) -> tuple[int, list[dict]]:
+    """Return a company's news, sourced from its deals, newest first.
+
+    Traverses the deal graph the extractor already built:
+
+        (Company)-[:BOUGHT|SOLD|INVESTED_IN|INVOLVED_IN]->(Deal)<-[:HAS_DEAL]-(Article)
+
+    so results are exactly the articles behind the deals the company takes part
+    in — precise and already filtered for relevance — plus any cross-source
+    duplicate articles of those same deals. Articles that merely mention the
+    company in passing are excluded because they never produced such a deal link.
+    """
+    # `name` filters the company; date filters apply to the resolved article.
+    art_conditions: list[str] = []
+    params: dict = {"name": name}
+    if date_from:
+        params["date_from"] = datetime.combine(date_from, time.min).replace(tzinfo=timezone.utc).isoformat()
+        art_conditions.append("a.published_at >= $date_from")
+    if date_to:
+        params["date_to"] = datetime.combine(date_to, time(23, 59, 59)).replace(tzinfo=timezone.utc).isoformat()
+        art_conditions.append("a.published_at <= $date_to")
+    art_where = ("WHERE " + " AND ".join(art_conditions)) if art_conditions else ""
+
+    match_clause = """
+        MATCH (c:Company)-[:BOUGHT|SOLD|INVESTED_IN|INVOLVED_IN]->(:Deal)<-[:HAS_DEAL]-(canon:Article)
+        WHERE toLower(c.name) CONTAINS toLower($name)
+        OPTIONAL MATCH (dup:Article)-[:DUPLICATE_OF]->(canon)
+        WITH collect(DISTINCT canon) + collect(DISTINCT dup) AS arts
+        UNWIND arts AS a
+        WITH DISTINCT a
+    """
+
+    with conn.session() as session:
+        total = session.run(
+            f"{match_clause} {art_where} RETURN count(a) AS total", **params
+        ).single()["total"]
+
+        result = session.run(
+            f"""
+            {match_clause}
+            {art_where}
+            RETURN a
+            ORDER BY a.published_at DESC
+            SKIP $offset LIMIT $limit
+            """,
+            **params,
+            offset=offset,
+            limit=limit,
+        )
+        items = [dict(record["a"]) for record in result]
+
+    return total, items
+
+
 # ---------------------------------------------------------------------------
 # Deal queries
 # ---------------------------------------------------------------------------

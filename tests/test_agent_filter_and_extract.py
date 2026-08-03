@@ -81,3 +81,37 @@ def test_near_duplicate_article_is_linked_instead_of_re_extracted():
     assert deals == 0
     extractor.extract.assert_not_called()
     repo.mark_duplicate_article.assert_called_once_with("a2", "canonical-1", is_relevant=True)
+
+
+def test_thin_duplicate_skips_both_filter_and_extraction_via_deal_parties():
+    # A thin/paywalled re-report of an already-extracted deal shares little
+    # vocabulary with the original, but names both parties — it must be caught
+    # BEFORE the relevance filter so neither LLM call is paid for.
+    repo = MagicMock()
+    repo.get_recent_deal_articles.return_value = [
+        {
+            "id": "canonical-1",
+            "title": "upGrad set to close Unacademy acquisition; deal valued at Rs 1,955 Cr",
+            "content": "upGrad is set to close its acquisition of Unacademy for Rs 1,955 crore.",
+            "deal_id": "deal-1",
+            "deal_value": "Rs 1,955 Cr",
+            "parties": ["upGrad", "Unacademy"],
+        }
+    ]
+    news_filter = MagicMock()
+    extractor = MagicMock()
+
+    thin_duplicate = _article(
+        "a2",
+        source_name="inc42",
+        title="upGrad-Unacademy Merger Nears Completion",
+        content="",
+    )
+
+    processed, deals = _filter_and_extract_articles([thin_duplicate], repo, news_filter, extractor)
+
+    assert processed == 1
+    assert deals == 0
+    news_filter.is_ma_funding_relevant.assert_not_called()
+    extractor.extract.assert_not_called()
+    repo.mark_duplicate_article.assert_called_once_with("a2", "canonical-1", is_relevant=True)

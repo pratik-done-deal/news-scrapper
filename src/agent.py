@@ -9,7 +9,7 @@ from typing import Optional
 from groq import Groq
 
 from .db.repository import NewsRepository
-from .processor.company_signal import article_similarity
+from .processor.company_signal import deal_amount_token, is_duplicate_of_deal
 from .processor.extractor import DealExtractor
 from .processor.filter import NewsFilter
 from .scraper.web_scraper import (
@@ -231,13 +231,27 @@ def _store_batch(batch: list[dict], repo: NewsRepository) -> list[dict]:
 
 
 DEDUP_SIMILARITY_THRESHOLD = 0.45
-DEDUP_WINDOW_DAYS = 7
+# Same deal is often re-reported by other outlets days after the first story,
+# so the comparison pool spans two weeks rather than one.
+DEDUP_WINDOW_DAYS = 14
 
 
 def _find_duplicate_article(article: dict, candidates: list[dict]) -> Optional[dict]:
-    """Return the first already-processed article that's a near-duplicate of `article`, if any."""
+    """Return the first already-extracted deal-article that `article` re-reports, if any.
+
+    Each candidate carries its deal's parties and amount token so the match
+    stays reliable even when one side's body is thin/paywalled — the case that
+    otherwise lets a second outlet's copy slip through into a redundant LLM
+    extraction.
+    """
     for candidate in candidates:
-        if article_similarity(article, candidate) >= DEDUP_SIMILARITY_THRESHOLD:
+        if is_duplicate_of_deal(
+            article,
+            candidate,
+            candidate.get("parties") or [],
+            candidate.get("amount_token"),
+            DEDUP_SIMILARITY_THRESHOLD,
+        ):
             return candidate
     return None
 
@@ -263,6 +277,8 @@ def _filter_and_extract_articles(
     """
     processed = deals = 0
     duplicate_pool = repo.get_recent_deal_articles(days=DEDUP_WINDOW_DAYS)
+    for candidate in duplicate_pool:
+        candidate["amount_token"] = deal_amount_token(candidate.get("deal_value"))
 
     for article in articles:
         source_name = article["source_name"]
@@ -277,6 +293,21 @@ def _filter_and_extract_articles(
                 f" Filtering/extracting [{date_label}]: {title or article['url'][-60:]}"
             )
 
+            # Duplicate detection runs before the relevance filter: a
+            # re-report of an already-extracted deal is M&A-relevant by
+            # definition, so catching it here skips BOTH the filter and the
+            # extraction LLM calls rather than just the extraction one.
+            duplicate = _find_duplicate_article(article, duplicate_pool)
+            if duplicate:
+                repo.mark_duplicate_article(article_id, duplicate["id"], is_relevant=True)
+                processed += 1
+                logger.info(
+                    f"  {_tag(STORAGE_LABEL, source_name)}"
+                    f" Duplicate of already-processed article {duplicate['id']}"
+                    f" (deal {duplicate['deal_id']}) — skipping filter + LLM extraction"
+                )
+                continue
+
             relevant = news_filter.is_ma_funding_relevant(title, content)
             repo.mark_ma_funding_relevant(article_id, relevant)
             processed += 1
@@ -285,16 +316,6 @@ def _filter_and_extract_articles(
                 logger.info(
                     f"  {_tag(STORAGE_LABEL, source_name)}"
                     " Not M&A or funding relevant — skipping extraction"
-                )
-                continue
-
-            duplicate = _find_duplicate_article(article, duplicate_pool)
-            if duplicate:
-                repo.mark_duplicate_article(article_id, duplicate["id"], is_relevant=True)
-                logger.info(
-                    f"  {_tag(STORAGE_LABEL, source_name)}"
-                    f" Duplicate of already-processed article {duplicate['id']}"
-                    f" (deal {duplicate['deal_id']}) — skipping LLM extraction"
                 )
                 continue
 
@@ -318,9 +339,18 @@ def _filter_and_extract_articles(
                 )
                 deals += 1
                 # Extend the in-batch pool so a duplicate of this same article
-                # scraped from another source later in this batch is caught too.
+                # scraped from another source later in this batch is caught too
+                # — carrying the deal's parties/amount so the thin-body fallback
+                # works within the batch as well as across batches.
                 duplicate_pool.append(
-                    {"id": article_id, "title": title, "content": content, "deal_id": deal_id}
+                    {
+                        "id": article_id,
+                        "title": title,
+                        "content": content,
+                        "deal_id": deal_id,
+                        "parties": [p for p in (deal.buyer, deal.seller) if p],
+                        "amount_token": deal_amount_token(deal.deal_value),
+                    }
                 )
                 logger.info(
                     f"  {_tag(STORAGE_LABEL, source_name)} Deal: [{deal.deal_type}]"

@@ -1,11 +1,18 @@
 import os
+from datetime import date
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from groq import Groq
 
 from ..dependencies import get_connection
-from ..schemas import CompanySignalResponse, DealWithArticleResponse, PaginatedResponse
+from ..schemas import (
+    ArticleResponse,
+    CompanySignalResponse,
+    DealWithArticleResponse,
+    PaginatedResponse,
+)
 from ...db import queries
 from ...db.queries import Neo4jConnection
 from ...processor.company_signal import CompanySignalScorer, empty_signal_snapshot
@@ -22,6 +29,34 @@ def search_deals_by_company_name(
 ):
     offset = (page - 1) * page_size
     total, items = queries.get_deals_by_company_name(conn, name, offset=offset, limit=page_size)
+    return PaginatedResponse(total=total, page=page, page_size=page_size, items=items)
+
+
+@router.get("/search/news", response_model=PaginatedResponse[ArticleResponse])
+def search_news_by_company_name(
+    name: str = Query(..., min_length=1, description="Company name to search news for"),
+    date_from: Optional[date] = Query(None, description="Published on or after (YYYY-MM-DD)"),
+    date_to: Optional[date] = Query(None, description="Published on or before (YYYY-MM-DD)"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    conn: Neo4jConnection = Depends(get_connection),
+):
+    """A company's news, sourced from the deals it takes part in, newest first.
+
+    Returns the articles behind the company's deals (and their cross-source
+    duplicates) via the Company->Deal<-Article graph, so results are precise and
+    already relevance-filtered. Articles that only mention the company in passing
+    are excluded. Use /companies/search/deals for the structured deal records.
+    """
+    offset = (page - 1) * page_size
+    total, items = queries.search_articles_by_company_name(
+        conn,
+        name,
+        date_from=date_from,
+        date_to=date_to,
+        offset=offset,
+        limit=page_size,
+    )
     return PaginatedResponse(total=total, page=page, page_size=page_size, items=items)
 
 

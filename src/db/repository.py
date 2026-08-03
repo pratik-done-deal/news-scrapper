@@ -247,7 +247,10 @@ class NewsRepository:
                 WHERE a.is_processed = true
                   AND a.duplicate_of IS NULL
                   AND a.scraped_at >= $cutoff
-                RETURN a.id AS id, a.title AS title, a.content AS content, d.id AS deal_id
+                OPTIONAL MATCH (co:Company)-[:BOUGHT|SOLD|INVESTED_IN|INVOLVED_IN]->(d)
+                RETURN a.id AS id, a.title AS title, a.content AS content,
+                       d.id AS deal_id, d.deal_value AS deal_value,
+                       [name IN collect(DISTINCT co.name) WHERE name IS NOT NULL] AS parties
                 """,
                 cutoff=cutoff,
             )

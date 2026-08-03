@@ -304,9 +304,35 @@ def article_fingerprint(article: dict) -> str:
     return hashlib.sha256(normalised[:240].encode()).hexdigest()
 
 
+# Similarity thresholds for treating two articles as the same story.
+DUPLICATE_SIMILARITY_THRESHOLD = 0.45
+# When two articles report the SAME monetary amount (e.g. the same funding
+# round covered by two outlets), we accept a much lower token-overlap floor:
+# outlets phrase the same deal very differently, so the shared amount is a
+# stronger duplicate signal than raw vocabulary overlap.
+_DUPLICATE_AMOUNT_FLOOR = 0.25
+
+# Collapse punctuation that appears *inside* a word so alternate spellings of
+# the same identifier tokenise identically: "reo.dev" -> "reodev", "u.s." ->
+# "us", "11.3" -> "113".
+_INTRAWORD_PUNCT_RE = re.compile(r"(?<=[a-z0-9])[.'’](?=[a-z0-9])")
+# Money amounts written as "$11.3 million" / "11.3 Mn" / "$11.3M" collapse to a
+# single stable token ("amt113") so the amount survives tokenisation instead of
+# being dropped as short numeric fragments ("11", "3").
+_MONEY_RE = re.compile(
+    r"\$?\s*([0-9][0-9,]*)\s*(?:million|mn|billion|bn|crore|cr|lakh|thousand|[mbk])\b"
+)
+
+
+def _normalise_text(text: str) -> str:
+    lowered = str(text).lower()
+    lowered = _INTRAWORD_PUNCT_RE.sub("", lowered)
+    return _MONEY_RE.sub(lambda m: f" amt{m.group(1).replace(',', '')} ", lowered)
+
+
 def article_tokens(article: dict) -> set[str]:
-    text = f"{article.get('title') or ''} {(article.get('content') or '')[:500]}"
-    raw_tokens = re.findall(r"[a-z0-9]+", text.lower())
+    text = _normalise_text(f"{article.get('title') or ''} {(article.get('content') or '')[:500]}")
+    raw_tokens = re.findall(r"[a-z0-9]+", text)
     return {
         _TOKEN_ALIASES.get(token, token)
         for token in raw_tokens
@@ -322,6 +348,91 @@ def article_similarity(left: dict, right: dict) -> float:
     return len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
 
 
+def are_duplicate_articles(
+    left: dict,
+    right: dict,
+    threshold: float = DUPLICATE_SIMILARITY_THRESHOLD,
+) -> bool:
+    """
+    Decide whether two articles are the same underlying story.
+
+    A plain Jaccard token overlap misses cross-outlet duplicates: the same deal
+    gets a different headline, framing, and boilerplate on each site, so overall
+    vocabulary overlap stays low even when the core facts are identical. We
+    therefore also treat two articles as duplicates when they report the same
+    monetary amount and clear a lower overlap floor — the shared amount plus a
+    little context is a reliable same-deal signal.
+    """
+    left_tokens = article_tokens(left)
+    right_tokens = article_tokens(right)
+    if not left_tokens or not right_tokens:
+        return False
+
+    intersection = left_tokens & right_tokens
+    jaccard = len(intersection) / len(left_tokens | right_tokens)
+    if jaccard >= threshold:
+        return True
+
+    shares_amount = any(token.startswith("amt") for token in intersection)
+    return shares_amount and jaccard >= _DUPLICATE_AMOUNT_FLOOR
+
+
+def deal_amount_token(deal_value: Optional[str]) -> Optional[str]:
+    """
+    Extract the normalised amount token (e.g. "amt1955" from "Rs 1,955 Cr") of
+    an already-extracted deal, so it can be matched against a new article's text
+    even when that article's body is thin or paywalled.
+    """
+    if not deal_value:
+        return None
+    for token in article_tokens({"title": deal_value}):
+        if token.startswith("amt"):
+            return token
+    return None
+
+
+def article_names_parties(article: dict, parties: list[str]) -> int:
+    """
+    Count how many of `parties` (the buyer/seller company names of an existing
+    deal) are fully named in `article`. A company counts only when *all* of its
+    name tokens are present, so "Omega Seiki" needs both "omega" and "seiki".
+    """
+    tokens = article_tokens(article)
+    named = 0
+    for party in parties:
+        party_tokens = article_tokens({"title": party or ""})
+        if party_tokens and party_tokens <= tokens:
+            named += 1
+    return named
+
+
+def is_duplicate_of_deal(
+    article: dict,
+    canonical: dict,
+    parties: list[str],
+    amount_token: Optional[str],
+    threshold: float = DUPLICATE_SIMILARITY_THRESHOLD,
+) -> bool:
+    """
+    Decide whether `article` re-reports the same story as an already-extracted
+    deal (`canonical` article + its `parties`/`amount_token`).
+
+    Token overlap (`are_duplicate_articles`) is tried first, but it collapses
+    when one side is thin/paywalled — the exact case that lets a second outlet's
+    copy slip through and pay for a redundant LLM extraction. So we add a signal
+    that survives thin bodies: an article that names *both* sides of the deal
+    (or one side plus the same monetary amount) is the same story even when raw
+    vocabulary overlap is low.
+    """
+    if are_duplicate_articles(article, canonical, threshold):
+        return True
+
+    named = article_names_parties(article, parties)
+    if named >= 2:
+        return True
+    return named >= 1 and amount_token is not None and amount_token in article_tokens(article)
+
+
 def collapse_duplicate_articles(articles: list[dict]) -> list[dict]:
     collapsed: dict[str, dict] = {}
     fingerprints: list[str] = []
@@ -330,7 +441,7 @@ def collapse_duplicate_articles(articles: list[dict]) -> list[dict]:
         existing_fingerprint = fingerprint if fingerprint in collapsed else None
         if existing_fingerprint is None:
             for candidate_fingerprint in fingerprints:
-                if article_similarity(article, collapsed[candidate_fingerprint]) >= 0.45:
+                if are_duplicate_articles(article, collapsed[candidate_fingerprint]):
                     existing_fingerprint = candidate_fingerprint
                     break
 
