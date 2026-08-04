@@ -17,6 +17,7 @@ SCHEMA_INDEXES = [
     "CREATE INDEX deal_sector IF NOT EXISTS FOR (d:Deal) ON (d.sector)",
     "CREATE INDEX deal_deal_type IF NOT EXISTS FOR (d:Deal) ON (d.deal_type)",
     "CREATE INDEX deal_extracted_at IF NOT EXISTS FOR (d:Deal) ON (d.extracted_at)",
+    "CREATE INDEX deal_is_bookmarked IF NOT EXISTS FOR (d:Deal) ON (d.is_bookmarked)",
     "CREATE INDEX company_id IF NOT EXISTS FOR (c:Company) ON (c.id)",
     "CREATE INDEX company_signal_generated_at IF NOT EXISTS FOR (s:CompanySignal) ON (s.generated_at)",
 ]

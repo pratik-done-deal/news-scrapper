@@ -40,6 +40,7 @@ def search_news_by_company_name(
     name: str = Query(..., min_length=1, description="Company name to search news for"),
     date_from: Optional[date] = Query(None, description="Published on or after (YYYY-MM-DD)"),
     date_to: Optional[date] = Query(None, description="Published on or before (YYYY-MM-DD)"),
+    bookmarked: Optional[bool] = Query(None, description="Only bookmarked deals when true"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     conn: Neo4jConnection = Depends(get_connection),
@@ -58,6 +59,7 @@ def search_news_by_company_name(
         name,
         date_from=date_from,
         date_to=date_to,
+        bookmarked=bookmarked,
         offset=offset,
         limit=page_size,
     )

@@ -58,6 +58,7 @@ class DealResponse(BaseModel):
     deal_type: Optional[str] = None
     summary: Optional[str] = None
     extracted_at: datetime
+    is_bookmarked: bool = False
     companies: list[CompanyInDealResponse] = []
 
     model_config = {"from_attributes": True}
@@ -77,6 +78,7 @@ class DealWithArticleResponse(BaseModel):
     sector: Optional[str] = None
     deal_type: Optional[str] = None
     summary: Optional[str] = None
+    is_bookmarked: bool = False
     article: Optional[ArticleSummaryResponse] = None
 
     model_config = {"from_attributes": True}

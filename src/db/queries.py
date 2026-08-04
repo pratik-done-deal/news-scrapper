@@ -27,6 +27,7 @@ class Neo4jConnection:
 def _deal_row(record) -> dict:
     deal = dict(record["d"])
     deal["article_id"] = record["article_id"]
+    deal["is_bookmarked"] = bool(deal.get("is_bookmarked", False))
     deal["companies"] = [
         {"id": c["id"], "name": c["name"], "role": c["role"]}
         for c in record["companies"]
@@ -38,9 +39,23 @@ def _deal_row(record) -> dict:
 def _deal_row_with_article(record) -> dict:
     deal = dict(record["d"])
     deal["article_id"] = record["article_id"]
+    deal["is_bookmarked"] = bool(deal.get("is_bookmarked", False))
     art = record.get("article")
     deal["article"] = dict(art) if art else None
     return deal
+
+
+def _bookmark_condition(bookmarked: Optional[bool]) -> str:
+    """Cypher predicate on `d` for a bookmarked filter, or "" when not filtering.
+
+    Missing `is_bookmarked` is treated as not-bookmarked. The `true` case is
+    written as a plain equality so the deal_is_bookmarked index can serve it.
+    """
+    if bookmarked is None:
+        return ""
+    if bookmarked:
+        return "d.is_bookmarked = true"
+    return "coalesce(d.is_bookmarked, false) = false"
 
 
 def _signal_row(record) -> dict:
@@ -123,6 +138,7 @@ def search_articles_by_company_name(
     name: str,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    bookmarked: Optional[bool] = None,
     offset: int = 0,
     limit: int = 20,
 ) -> tuple[int, list[dict]]:
@@ -148,6 +164,9 @@ def search_articles_by_company_name(
     if date_to:
         params["date_to"] = datetime.combine(date_to, time(23, 59, 59)).replace(tzinfo=timezone.utc).isoformat()
         conditions.append("art.published_at <= $date_to")
+    bookmark_cond = _bookmark_condition(bookmarked)
+    if bookmark_cond:
+        conditions.append(bookmark_cond)
     where = "WHERE " + " AND ".join(conditions)
 
     match_clause = (
@@ -187,6 +206,7 @@ def list_deals(
     sector: Optional[str] = None,
     deal_type: Optional[str] = None,
     days: Optional[int] = None,
+    bookmarked: Optional[bool] = None,
     offset: int = 0,
     limit: int = 20,
 ) -> tuple[int, list[dict]]:
@@ -202,8 +222,10 @@ def list_deals(
     if days is not None:
         conditions.append("art.published_at >= $cutoff")
         params["cutoff"] = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    conditions.append(_bookmark_condition(bookmarked))
 
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    active = [c for c in conditions if c]
+    where = ("WHERE " + " AND ".join(active)) if active else ""
 
     with conn.session() as session:
         total = session.run(
@@ -246,6 +268,27 @@ def get_deal(conn: Neo4jConnection, deal_id: UUID) -> Optional[dict]:
             id=str(deal_id),
         ).single()
         return _deal_row(record) if record else None
+
+
+def set_deal_bookmark(
+    conn: Neo4jConnection, deal_id: UUID, bookmarked: bool
+) -> Optional[dict]:
+    """Set/clear a deal's bookmark flag; return the updated deal (deal + article).
+
+    Idempotent — setting the same value twice is a no-op. Returns None when the
+    deal does not exist so the caller can raise 404.
+    """
+    with conn.session() as session:
+        record = session.run(
+            """
+            MATCH (art:Article)-[:HAS_DEAL]->(d:Deal {id: $id})
+            SET d.is_bookmarked = $bookmarked
+            RETURN d, art.id AS article_id, art AS article
+            """,
+            id=str(deal_id),
+            bookmarked=bookmarked,
+        ).single()
+        return _deal_row_with_article(record) if record else None
 
 
 def get_company(conn: Neo4jConnection, company_id: UUID) -> Optional[dict]:
