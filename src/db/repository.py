@@ -1,26 +1,10 @@
 import hashlib
 import logging
-import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-# Legal entity suffixes to strip before company name comparison/storage.
-# Order matters: longer patterns must appear before shorter overlapping ones.
-_LEGAL_SUFFIX_RE = re.compile(
-    r"[\s,.]*(pvt\.?\s*ltd\.?|private\s+limited|public\s+limited"
-    r"|co\.\s*ltd\.?|co\.\s*limited"
-    r"|limited|ltd\.?|inc\.?|incorporated|corp\.?|corporation"
-    r"|llp|llc|gmbh|plc|l\.l\.c\.?|l\.l\.p\.?)[\s.]*$",
-    re.IGNORECASE,
-)
-
-
-def _normalize_company_name(name: str) -> str:
-    """Return a canonical company name by stripping legal suffixes and normalizing whitespace."""
-    name = _LEGAL_SUFFIX_RE.sub("", name.strip()).strip().rstrip(",").strip()
-    name = re.sub(r"\s+", " ", name)
-    return name.title()
+from .names import normalize_company_name as _normalize_company_name
 
 
 def _company_id(name: str) -> str:

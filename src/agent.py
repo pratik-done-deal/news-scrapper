@@ -12,6 +12,7 @@ from .db.repository import NewsRepository
 from .processor.company_signal import deal_amount_token, is_duplicate_of_deal
 from .processor.extractor import DealExtractor
 from .processor.filter import NewsFilter
+from .processor.watchlist import gate_articles
 from .scraper.web_scraper import (
     CNBCScraper,
     EntrackrScraper,
@@ -428,6 +429,27 @@ class NewsAgent:
         Run one scrape worker process per source concurrently and collect
         their results once every one of them has finished (join).
         """
+        jobs = [(source, company) for source in sources]
+        return self._run_scrape_jobs(jobs, dt_start, dt_end, counters)
+
+    def _run_scrape_jobs(
+        self,
+        jobs: list[tuple[dict, Optional[str]]],
+        dt_start: Optional[datetime],
+        dt_end: Optional[datetime],
+        counters: dict,
+    ) -> tuple[int, list[dict]]:
+        """
+        Run every `(source, company)` job in one process pool and join.
+
+        A job with `company=None` scrapes that source's section listing; with a
+        company it runs the source's on-site search for that name. Keeping all
+        jobs in a single pool is what makes a watchlist run affordable — a pool
+        per company would spawn one per entity.
+
+        Each returned article carries `searched_company`, so the caller can tell
+        a targeted hit from a listing article that still needs gating.
+        """
         total_scraped = 0
         all_articles: list[dict] = []
 
@@ -438,29 +460,32 @@ class NewsAgent:
                     _scrape_source_worker,
                     source, dt_start, dt_end, self._scraper_kwargs,
                     self.max_articles, self.db_config, company,
-                ): source["name"]
-                for source in sources
+                ): (source["name"], company)
+                for source, company in jobs
             }
             for future in as_completed(futures):
-                source_name = futures[future]
+                source_name, company = futures[future]
+                label = f"[{source_name}]" + (f" (company='{company}')" if company else "")
                 try:
                     result = future.result()
                 except Exception as exc:
-                    logger.exception(f"{_tag(SCRAPER_LABEL)} Worker crashed for [{source_name}]")
+                    logger.exception(f"{_tag(SCRAPER_LABEL)} Worker crashed for {label}")
                     counters["errors"].append(f"{source_name}: {exc!r}")
                     continue
 
                 if result["error"]:
                     counters["errors"].append(f"{source_name}: {result['error']}")
                     logger.error(
-                        f"{_tag(SCRAPER_LABEL)} Error scraping [{source_name}]: {result['error']}"
+                        f"{_tag(SCRAPER_LABEL)} Error scraping {label}: {result['error']}"
                     )
                     continue
 
                 total_scraped += result["link_count"]
-                all_articles.extend(result["articles"])
+                all_articles.extend(
+                    {**article, "searched_company": company} for article in result["articles"]
+                )
                 logger.info(
-                    f"{_tag(SCRAPER_LABEL)} [{source_name}] joined"
+                    f"{_tag(SCRAPER_LABEL)} {label} joined"
                     f" — {len(result['articles'])} article(s)"
                 )
 
@@ -568,6 +593,108 @@ class NewsAgent:
         )
         if counters["errors"]:
             logger.error(f"Company scrape '{company}' completed with errors: {counters['errors']}")
+        return counters
+
+    def scrape_watchlist(
+        self,
+        entries: list,
+        sources: list[dict],
+        matcher=None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        max_search_entities: Optional[int] = None,
+    ) -> dict:
+        """
+        Scrape news restricted to the companies tracked in the company DB.
+
+        Two paths, because only some sources expose an on-site search:
+
+        - sources with `search_url` run one targeted search per watchlist entry
+          (capped by `max_search_entities`);
+        - sources without one scrape their listing as usual, and `matcher` then
+          drops every article that mentions no tracked company.
+
+        All jobs share one process pool, and filter/extraction runs **once** at
+        the end over everything pending — unlike `scrape_company()`, which is
+        scoped to a single company and extracts on every call.
+        """
+        searchable = [s for s in sources if s.get("search_url")]
+        listing = [s for s in sources if not s.get("search_url")]
+
+        search_entries = entries[:max_search_entities] if max_search_entities else entries
+        dt_start, dt_end = self._resolve_date_range(start_date, end_date)
+
+        counters = {
+            "entities": len(search_entries),
+            "search_jobs": 0,
+            "scraped": 0,
+            "gated_out": 0,
+            "new": 0,
+            "deals": 0,
+            "errors": [],
+        }
+
+        jobs: list[tuple[dict, Optional[str]]] = [
+            (source, entry.search_term) for source in searchable for entry in search_entries
+        ]
+        counters["search_jobs"] = len(jobs)
+        if matcher is not None:
+            jobs.extend((source, None) for source in listing)
+        elif listing:
+            logger.info(
+                f"Watchlist run: no matcher supplied, skipping {len(listing)} listing source(s)"
+            )
+
+        if not jobs:
+            logger.warning("Watchlist run: nothing to do — no entities and no gated sources")
+            counters["errors"].append("no scrape jobs to run")
+            return counters
+
+        logger.info(
+            f"Watchlist run started — {len(search_entries)} entity/entities across"
+            f" {len(searchable)} searchable source(s),"
+            f" {len(listing) if matcher is not None else 0} gated listing source(s)"
+        )
+
+        total_scraped, all_articles = self._run_scrape_jobs(jobs, dt_start, dt_end, counters)
+        counters["scraped"] = total_scraped
+
+        # Articles from a targeted search are already entity-scoped. Listing
+        # articles have to earn their place by naming a tracked company.
+        targeted = [a for a in all_articles if a.get("searched_company")]
+        untargeted = [a for a in all_articles if not a.get("searched_company")]
+        if matcher is not None and untargeted:
+            kept, dropped = gate_articles(untargeted, matcher)
+            counters["gated_out"] = dropped
+            logger.info(
+                f"{_tag(SCRAPER_LABEL)} Entity gate: kept {len(kept)} of"
+                f" {len(untargeted)} listing article(s), dropped {dropped}"
+            )
+        else:
+            kept = untargeted
+
+        to_store = targeted + kept
+        for i in range(0, len(to_store), self.batch_size):
+            batch = to_store[i:i + self.batch_size]
+            batch_num = i // self.batch_size
+            try:
+                inserted = _store_batch(batch, self.repo)
+                counters["new"] += len(inserted)
+            except Exception as exc:
+                logger.exception(f"{_tag(STORAGE_LABEL)} Batch {batch_num} store failed")
+                counters["errors"].append(f"batch {batch_num}: {exc!r}")
+
+        extract_counters = self.extract_pending(limit=None)
+        counters["deals"] = extract_counters["deals"]
+        counters["errors"].extend(extract_counters["errors"])
+
+        logger.info(
+            f"Watchlist run complete — scraped: {counters['scraped']},"
+            f" gated out: {counters['gated_out']}, new: {counters['new']},"
+            f" deals: {counters['deals']}"
+        )
+        if counters["errors"]:
+            logger.error(f"Watchlist run completed with errors: {counters['errors']}")
         return counters
 
     def extract_pending(self, limit: Optional[int] = None) -> dict:

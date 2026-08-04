@@ -5,6 +5,7 @@ groq>=0.13.0
 # SQLAlchemy==2.0.35
 # psycopg2-binary==2.9.9
 neo4j==5.27.0
+PyMySQL==1.1.1
 pydantic==2.9.2
 python-dotenv==1.0.1
 pyyaml==6.0.2

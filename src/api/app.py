@@ -1,7 +1,9 @@
+import logging
 import os
 import yaml
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -11,10 +13,29 @@ from neo4j import GraphDatabase
 from .job_manager import JobManager
 from .routes import analytics, articles, companies, company_scrape, deals, extract, scrape
 from ..agent import NewsAgent
+from ..db.mysql_dao import MySQLConfig, MySQLDAO, MySQLNotConfigured
 from ..db.queries import Neo4jConnection
 from ..scheduler.service import SchedulerService
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+
+def _build_mysql_dao(settings: dict) -> Optional[MySQLDAO]:
+    """Company MySQL is optional: without env vars the API starts without it."""
+    if not MySQLConfig.is_configured():
+        logger.info("Company MySQL not configured (MYSQL_HOST/MYSQL_DATABASE unset); skipping")
+        return None
+    try:
+        dao = MySQLDAO(MySQLConfig.from_env(settings))
+    except MySQLNotConfigured as exc:
+        logger.warning("Company MySQL partially configured, skipping: %s", exc)
+        return None
+    if not dao.health_check():
+        # Keep the DAO: the pool reconnects once the server is reachable again.
+        logger.warning("Company MySQL configured but unreachable at startup; queries will fail until it recovers")
+    return dao
 
 
 @asynccontextmanager
@@ -42,6 +63,7 @@ async def lifespan(app: FastAPI):
         max_connection_pool_size=db_cfg.get("pool_size", 5),
     )
     app.state.conn = Neo4jConnection(driver, neo4j_database)
+    app.state.mysql_dao = _build_mysql_dao(settings)
     app.state.settings = settings
     app.state.sources_config = sources_config
     app.state.job_manager = JobManager()
@@ -67,6 +89,8 @@ async def lifespan(app: FastAPI):
     app.state.scheduler_service.shutdown()
     app.state.executor.shutdown(wait=False)
     app.state.conn.driver.close()
+    if app.state.mysql_dao is not None:
+        app.state.mysql_dao.close()
 
 
 app = FastAPI(

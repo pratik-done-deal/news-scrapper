@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from ..db.mysql_queries import ENTITY_TYPES
+
 T = TypeVar("T")
 
 
@@ -164,6 +166,69 @@ class CompanyScrapeRequest(BaseModel):
         if bool(self.start_date) != bool(self.end_date):
             raise ValueError("start_date and end_date must be provided together")
         return self
+
+
+class WatchlistScrapeRequest(BaseModel):
+    """Scrape news restricted to companies tracked in the company MySQL DB."""
+
+    since: Optional[str] = Field(
+        None,
+        description="Only search companies added to the company DB on or after this date "
+                    "(YYYY-MM-DD). Omit to use the watchlist.default_since_hours window.",
+    )
+    entity_types: Optional[list[str]] = Field(
+        None, description="Restrict to seller / buyer / lead; omit for all three"
+    )
+    limit: Optional[int] = Field(
+        None, ge=1, description="Cap on entities searched; defaults to watchlist.max_entities_per_run"
+    )
+    sources: Optional[list[str]] = Field(
+        None, description="Restrict to these source names; omit to use every configured source"
+    )
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+    @field_validator("since", "start_date", "end_date")
+    @classmethod
+    def validate_date_format(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            datetime.strptime(v, "%Y-%m-%d")
+        return v
+
+    @field_validator("entity_types")
+    @classmethod
+    def validate_entity_types(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+        if v is None:
+            return v
+        unknown = [t for t in v if t not in ENTITY_TYPES]
+        if unknown:
+            raise ValueError(f"Unknown entity type(s): {', '.join(unknown)}")
+        return v
+
+    @model_validator(mode="after")
+    def validate_date_pair(self) -> "WatchlistScrapeRequest":
+        if bool(self.start_date) != bool(self.end_date):
+            raise ValueError("start_date and end_date must be provided together")
+        return self
+
+
+class WatchlistEntryResponse(BaseModel):
+    entity_type: str
+    entity_id: int
+    company_name: str
+    brand_name: Optional[str] = None
+    website: Optional[str] = None
+    search_term: str
+
+
+class WatchlistPreviewResponse(BaseModel):
+    """What a watchlist run would search for, without running it."""
+
+    since: Optional[str] = None
+    total_entities: int = Field(..., description="Rows matching the filters in the company DB")
+    total_terms: int = Field(..., description="Distinct search terms after dedup and length filtering")
+    counts_by_type: dict[str, int]
+    entries: list[WatchlistEntryResponse]
 
 
 class ExtractRequest(BaseModel):
