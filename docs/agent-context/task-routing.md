@@ -1,6 +1,6 @@
 # Task Routing
 
-Last refreshed: 2026-06-23
+Last refreshed: 2026-08-04
 
 Use this file first. It exists to prevent rereading every doc and every source file.
 
@@ -18,6 +18,8 @@ Use `one cache/doc` literally: read the first routed file, then move to exact so
 - Filter keyword tuning or false positives/negatives -> `module-cache/filter.md`; add `agents/filter-agent.md` only if deeper runtime behavior is needed.
 - Deal schema, prompt, sectors, sub-sectors, or deal type changes -> `module-cache/extractor.md`; add `agents/extractor-agent.md` only if deeper runtime behavior is needed.
 - Neo4j writes, company normalization, relationships, constraints -> `module-cache/storage.md`; add `agents/storage-agent.md` only if deeper runtime behavior is needed.
+- Company MySQL reads, SQL DAO, MySQL config or pooling -> `module-cache/company-mysql.md`.
+- Restricting news runs to tracked companies, search terms, entity gate -> `module-cache/watchlist.md`.
 - FastAPI routes, schemas, query functions, scrape trigger jobs -> `module-cache/api.md`; add `agents/api-agent.md` only if deeper runtime behavior is needed.
 - Producer/consumer pipeline, queues, date range dispatch, process lifecycle -> `module-cache/pipeline.md`; add `agents/pipeline-agent.md` only if deeper runtime behavior is needed.
 - Multiple independent tasks, broad PRD, parallel workers, real subagent spawning, or fresh-session briefs -> `.agents/skills/task-orchestrator/SKILL.md`.
@@ -30,6 +32,8 @@ Use `one cache/doc` literally: read the first routed file, then move to exact so
 | keyword, relevant, false positive, false negative, M&A filter | `module-cache/filter.md` |
 | Groq, LLM, extraction, prompt, sector, sub-sector, deal type | `module-cache/extractor.md` |
 | Neo4j, Cypher, company, relationship, duplicate URL, graph schema | `module-cache/storage.md` |
+| MySQL, SQL, company DB, business data, DAO, read-only query | `module-cache/company-mysql.md` |
+| watchlist, tracked companies, entity gate, search term, newly added | `module-cache/watchlist.md` |
 | endpoint, FastAPI, route, response, schema, query, Swagger | `module-cache/api.md` |
 | multiprocessing, queue, worker, producer, consumer, date range run | `module-cache/pipeline.md` |
 | task understanding, PRD, Jira, plan, implementation, testing | `.agents/skills/prd-analyzer/SKILL.md`, then `.agents/skills/feature-researcher/SKILL.md` |

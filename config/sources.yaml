@@ -27,6 +27,9 @@ sources:
 
   - name: Inc42 Homepage
     url: https://inc42.com/
+    # Company-scrape search API. Unlike the other search_url entries this is not a
+    # {query} template — Inc42's search is a POST endpoint taking a `query` field.
+    search_url: https://search.thed2csummit.co/query
     domain: inc42.com
     link_contains: /
     scraper: inc42

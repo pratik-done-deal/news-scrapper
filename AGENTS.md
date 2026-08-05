@@ -59,6 +59,10 @@ Do not read every agent, skill, or cache file by default. If a module cache iden
 | `src/processor/extractor.py` | `DealExtractor` + `DealData` Pydantic schema |
 | `src/db/repository.py` | `NewsRepository` — all Neo4j writes |
 | `src/db/queries.py` | Read-only Cypher queries (API layer) |
+| `src/db/mysql_dao.py` | `MySQLDAO` — read-only pool for the company MySQL DB |
+| `src/db/mysql_queries.py` | Company DB reads — sellers, buyers, leads |
+| `src/db/names.py` | Company name normalisation shared by storage and watchlist |
+| `src/processor/watchlist.py` | Search terms + entity gate for tracked companies |
 | `src/api/` | FastAPI app, routes, schemas, DI |
 | `config/settings.yaml` | Timeouts, delays, Groq model, pool size |
 | `config/sources.yaml` | News source list with scraper keys |
@@ -76,6 +80,23 @@ python api_server.py
 # Reprocess
 python reprocess_article.py <article_id>
 python reprocess_unprocessed.py
+
+# Company MySQL schema inspection (read-only)
+python scripts/inspect_company_db.py
+python scripts/inspect_company_db.py --table <table> --sample 5
+
+# Seed a local test copy of the company DB (writes to company_db_test only)
+python scripts/seed_test_company_db.py
+```
+
+Watchlist runs (news restricted to companies tracked in the company DB) are
+triggered over the API:
+
+```bash
+curl 'localhost:8000/api/v1/companies/watchlist?limit=20'          # preview search terms
+curl -X POST localhost:8000/api/v1/companies/scrape/watchlist \
+     -H 'Content-Type: application/json' -d '{"limit": 2}'
+curl localhost:8000/api/v1/companies/scrape/<job_id>              # poll counters
 ```
 
 ## Environment Variables
@@ -86,6 +107,13 @@ NEO4J_USER=neo4j
 NEO4J_PASSWORD=<required>
 NEO4J_DATABASE=newsscrapedatabase
 GROQ_API_KEY=<required>
+
+# Company MySQL (read-only) — optional; unset means the API runs without it
+MYSQL_HOST=
+MYSQL_PORT=3306
+MYSQL_USER=
+MYSQL_PASSWORD=
+MYSQL_DATABASE=
 ```
 
 ## Tests
@@ -94,6 +122,10 @@ GROQ_API_KEY=<required>
 python -m pytest              # offline development verification
 python validate_filter.py     # live Groq/news smoke check for M&A keyword matching
 python test_date_range.py     # live ET date range smoke check
+
+# Company MySQL integration tests — skipped unless a seeded test DB is reachable
+python scripts/seed_test_company_db.py
+MYSQL_HOST=127.0.0.1 MYSQL_USER=root MYSQL_PASSWORD= python -m pytest tests/test_mysql_integration.py
 ```
 
 ## Cache Maintenance

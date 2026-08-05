@@ -1,6 +1,6 @@
 # Codebase Map
 
-Last refreshed: 2026-06-23
+Last refreshed: 2026-08-04
 
 Use this as the broad orientation cache before source search. Trust source code over this file when they disagree.
 
@@ -9,7 +9,7 @@ Use this as the broad orientation cache before source search. Trust source code 
 - Project: Deal and funding intelligence platform.
 - Runtime: Python data pipeline plus FastAPI read API.
 - Core pipeline: scrape article links and content, filter for M&A/funding relevance, extract structured deal data with Groq, write Neo4j graph data.
-- Stack: FastAPI, Neo4j driver, Pydantic v2, Groq SDK, requests, BeautifulSoup, trafilatura, PyYAML, python-dotenv.
+- Stack: FastAPI, Neo4j driver, PyMySQL, Pydantic v2, Groq SDK, requests, BeautifulSoup, trafilatura, PyYAML, python-dotenv.
 - Offline development verification: `python -m pytest`.
 - Live smoke checks: `python validate_filter.py`, `python test_date_range.py`.
 
@@ -18,7 +18,7 @@ Use this as the broad orientation cache before source search. Trust source code 
 - `src/agent.py`: `NewsAgent`, multiprocessing queues, producer/consumer orchestration.
 - `src/scraper/`: `WebScraper` base class and source-specific scraper implementations.
 - `src/processor/`: `NewsFilter`, `DealExtractor`, and `DealData`.
-- `src/db/`: Neo4j writes, schema setup, and read query functions.
+- `src/db/`: Neo4j writes, schema setup, read query functions, and the read-only company MySQL DAO.
 - `src/api/`: FastAPI app, routes, schemas, dependencies, and job manager.
 - `config/`: YAML settings and news source definitions.
 - `agents/`: runtime/domain agent docs.
@@ -35,6 +35,8 @@ Use this as the broad orientation cache before source search. Trust source code 
 - `filter`: `src/processor/filter.py`, `validate_filter.py`.
 - `extractor`: `src/processor/extractor.py`, `config/settings.yaml`.
 - `storage`: `src/db/repository.py`, `src/db/models.py`.
+- `company-mysql`: `src/db/mysql_dao.py`, `src/db/mysql_queries.py`, `scripts/inspect_company_db.py`.
+- `watchlist`: `src/processor/watchlist.py`, `NewsAgent.scrape_watchlist`, watchlist routes in `src/api/routes/company_scrape.py`.
 - `api`: `api_server.py`, `src/api/**`, `src/db/queries.py`.
 
 ## Default Trace Order

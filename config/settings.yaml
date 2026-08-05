@@ -14,6 +14,22 @@ database:
   database: newsscrapedatabase
   pool_size: 5
 
+# Company MySQL (read-only). Host/user/password/database come from MYSQL_* env
+# vars; these are tuning defaults only. Omit the env vars to run without it.
+company_mysql:
+  port: 3306
+  pool_size: 5
+  connect_timeout: 10   # seconds to establish a connection
+  read_timeout: 30      # seconds to wait for a query result
+  charset: utf8mb4
+
+# Restricts news runs to companies tracked in the company MySQL DB.
+watchlist:
+  default_since_hours: 24     # "newly added" window when `since` is omitted; 0 disables the cutoff
+  max_entities_per_run: 200   # cap on on-site searches per run
+  min_term_length: 3          # drop search terms shorter than this
+  gate_listing_sources: true  # keep only entity-mentioning articles from sources without search_url
+
 scheduler:
   scrape_interval_minutes: 10
   extraction_interval_minutes: 10
