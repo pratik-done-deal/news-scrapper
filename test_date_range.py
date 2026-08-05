@@ -11,7 +11,7 @@ import argparse
 import sys
 from datetime import datetime, timezone, timedelta
 
-from src.scraper.web_scraper import WebScraper
+from src.scraper.web_scraper import ETScraper
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -51,7 +51,7 @@ def main() -> None:
     print(f"Max pages  : {args.max_pages}")
     print("-" * 60)
 
-    scraper = WebScraper(request_timeout=30, delay=args.delay)
+    scraper = ETScraper(request_timeout=30, delay=args.delay)
 
     # Step 1 — collect article URLs from listing pages
     print("\n[1] Collecting article links …")

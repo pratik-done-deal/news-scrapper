@@ -26,8 +26,11 @@ def trigger_scrape(body: ScrapeRequest, request: Request, job_manager: JobManage
         try:
             agent = NewsAgent(
                 settings,
-                os.environ["DATABASE_URL"],
-                os.environ["GROQ_API_KEY"],
+                neo4j_uri=os.environ["NEO4J_URI"],
+                neo4j_user=os.environ["NEO4J_USER"],
+                neo4j_password=os.environ["NEO4J_PASSWORD"],
+                neo4j_database=os.environ.get("NEO4J_DATABASE", "neo4j"),
+                groq_api_key=os.environ["GROQ_API_KEY"],
             )
             agent.run(
                 sources_config["sources"],

@@ -1,11 +1,14 @@
 import json
 import logging
+import time
 from typing import Optional
 
 from groq import Groq
 from pydantic import BaseModel, field_validator
 
 logger = logging.getLogger(__name__)
+
+GROQ_REQUEST_DELAY_SECONDS = 10
 
 SECTORS = [
     "D2C", "Edtech", "Fintech", "Gaming", "Agency", "Marketplace",
@@ -30,7 +33,9 @@ IMPORTANT RULES:
 Extract the following fields and return ONLY valid JSON:
 
 - buyer: For acquisitions/mergers — the acquiring company. For funding rounds — the investor(s), comma-separated if multiple. Null if not applicable.
+  Always use the company's clean trading name — omit legal suffixes like "Pvt. Ltd.", "Private Limited", "Ltd.", "Inc.", "Corp.", "LLP", etc. (e.g. write "Tata Sons" not "Tata Sons Pvt. Ltd.").
 - seller: For acquisitions/mergers — the company being acquired. For funding rounds — the company receiving the investment. Null if not applicable.
+  Same rule: omit legal suffixes from the company name.
 - deal_value: Monetary value as stated in the article, e.g. "$2.5 billion" (null if not mentioned)
 - sector: Must be exactly one of: {sectors}
 - sub_sector: Only required when sector is "D2C", "Fintech", or "Others".
@@ -39,8 +44,8 @@ Extract the following fields and return ONLY valid JSON:
   - If sector is "Others", choose from: {others_sub}
   - For all other sectors, set to null
 - country: Primary country where the deal is happening
-- deal_type: Classify the deal type using one of — funding, acquisition, merger, joint_venture, divestiture, partnership, other
-  - Use "funding" for any funding round (seed, Series A/B/C, etc.)
+- deal_type: Classify the deal type using one of — funding_round, acquisition, merger, joint_venture, divestiture, partnership, other
+  - Use "funding_round" for any funding round (seed, Series A/B/C, etc.)
   - Use "acquisition" for any acquisition deal, whether closed or just announced/pending
   - Use "merger" for mergers, "joint_venture" for JVs, etc.
 - summary: A 2–3 sentence summary for a business analyst. Include who is involved, what is happening, the deal value if known, whether the deal is closed or still pending/announced, and why it matters.
@@ -175,11 +180,14 @@ class DealData(BaseModel):
     def normalise_deal_type(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return v
+        normalised = v.lower()
+        if normalised == "funding":
+            return "funding_round"
         allowed = {
             "acquisition", "merger", "joint_venture",
             "funding_round", "divestiture", "partnership", "other",
         }
-        return v.lower() if v.lower() in allowed else "other"
+        return normalised if normalised in allowed else "other"
 
 
 class DealExtractor:
@@ -197,6 +205,7 @@ class DealExtractor:
                 title=title or "(no title)",
                 content=(content or "")[:4000],
             )
+            start = time.monotonic()
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
@@ -204,8 +213,13 @@ class DealExtractor:
                 max_tokens=600,
                 response_format={"type": "json_object"},
             )
+            elapsed = time.monotonic() - start
+            logger.info(f"Groq request took {elapsed:.2f}s (model={self.model})")
+
             raw = json.loads(response.choices[0].message.content)
             return DealData(**raw)
         except Exception as e:
             logger.error(f"Extraction LLM call failed: {e}")
             return None
+        finally:
+            time.sleep(GROQ_REQUEST_DELAY_SECONDS)

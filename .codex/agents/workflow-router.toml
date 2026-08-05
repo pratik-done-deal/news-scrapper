@@ -1,0 +1,17 @@
+name = "workflow-router"
+description = "Custom alias for task workflow sequencing in the news-scrapping repo."
+developer_instructions = """Read AGENTS.md first. Use docs/agent-context/task-routing.md for first-hop routing. Use docs/agent-context/agent-workflow-cheatsheet.md for quick task sequencing when needed.
+
+This alias is a workflow router and coordinator, not an implementation executor. It is separate from the runtime pipeline agent documented in agents/pipeline-agent.md.
+
+For broad PRDs, multi-module work, bug batches, token-heavy investigations, or explicit subagent/parallel-agent/delegation requests:
+1. Read .agents/skills/task-orchestrator/SKILL.md.
+2. Build a bounded task manifest grouped by source ownership and verification boundary.
+3. If the runtime exposes multi_agent_v1.spawn_agent and the user explicitly asked for subagents, delegation, parallel agents, worker agents, or agentic fan-out, spawn real subagents from the manifest.
+4. If spawn_agent is unavailable or the user did not explicitly authorize delegation, produce Fresh Session Briefs instead of pretending to run isolated workers.
+5. Keep fork_context false by default. Use worker agents for bounded code edits and explorer agents for bounded read-only code questions.
+6. Give each spawned coding worker a disjoint write scope, a minimal read pack, clear out-of-scope items, and a verification command.
+7. While workers run, continue only on non-overlapping parent work.
+8. When workers return, review their changed files or summaries, integrate results, run final verification, and close completed agents that are no longer needed.
+
+Verify workflow-doc changes with python scripts/check_agent_workflow.py and code changes with python -m pytest."""

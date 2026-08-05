@@ -1,11 +1,11 @@
 from fastapi import Request
-from sqlalchemy import Engine
 
 from .job_manager import JobManager
+from ..db.queries import Neo4jConnection
 
 
-def get_engine(request: Request) -> Engine:
-    return request.app.state.engine
+def get_connection(request: Request) -> Neo4jConnection:
+    return request.app.state.conn
 
 
 def get_job_manager(request: Request) -> JobManager:

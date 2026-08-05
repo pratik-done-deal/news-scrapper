@@ -4,8 +4,6 @@ CREATE TABLE IF NOT EXISTS companies (
     name TEXT NOT NULL UNIQUE
 );
 
-CREATE INDEX IF NOT EXISTS idx_companies_name ON companies(name);
-
 -- company_deals: links a company to a deal with its role
 CREATE TABLE IF NOT EXISTS company_deals (
     id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

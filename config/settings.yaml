@@ -2,11 +2,19 @@ scraping:
   request_timeout: 30
   delay_between_requests: 2  # seconds between article fetches to avoid rate limiting
   max_articles_per_source: 20
+  batch_size: 10  # articles per DB write once all sources finish scraping
 
 groq:
   model: llama-3.3-70b-versatile
   temperature: 0.1
 
 database:
+  uri: neo4j://127.0.0.1:7687
+  username: neo4j
+  database: newsscrapedatabase
   pool_size: 5
-  max_overflow: 10
+
+scheduler:
+  scrape_interval_minutes: 10
+  extraction_interval_minutes: 10
+  extraction_batch_limit: 50  # max pending articles pulled per extraction tick

@@ -84,20 +84,20 @@ class NewsFilter:
     # Content is long and can contain incidental mentions, so require at least 2.
     CONTENT_MIN_MATCHES = 2
 
-    def is_ma_relevant(self, title: Optional[str], content: Optional[str]) -> bool:
+    def is_ma_funding_relevant(self, title: Optional[str], content: Optional[str]) -> bool:
         if title:
             count, terms = _count_matches(title)
             if count >= 1:
-                logger.debug(f"MA match on title: {terms}")
+                logger.debug(f"M&A/funding match on title: {terms}")
                 return True
 
         if content:
             count, terms = _count_matches(content)
             if count >= self.CONTENT_MIN_MATCHES:
-                logger.debug(f"MA match on content ({count} signals): {terms}")
+                logger.debug(f"M&A/funding match on content ({count} signals): {terms}")
                 return True
             if count == 1:
-                logger.debug(f"MA content match ignored (only 1 signal — likely incidental): {terms}")
+                logger.debug(f"M&A/funding content match ignored (only 1 signal — likely incidental): {terms}")
 
-        logger.debug("No MA keywords found — skipping article")
+        logger.debug("No M&A or funding keywords found — skipping article")
         return False
