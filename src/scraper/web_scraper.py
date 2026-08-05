@@ -1153,6 +1153,97 @@ class Inc42Scraper(WebScraper):
         """Fetch the homepage and return dated Inc42 article URLs."""
         return self._get_first_page_article_links(source_url, domain, link_contains, max_articles)
 
+    def _search_results(self, search_url: str, company: str) -> list[dict]:
+        """POST `company` to Inc42's search API and return its raw result list."""
+        start = time.perf_counter()
+        try:
+            response = self.session.post(
+                search_url, data={"query": company}, timeout=self.timeout
+            )
+            response.raise_for_status()
+            results = response.json()
+        except requests.RequestException as e:
+            logger.warning(f"Inc42 search API failed for '{company}': {e}")
+            return []
+        except ValueError as e:
+            logger.warning(f"Inc42 search API returned invalid JSON for '{company}': {e}")
+            return []
+
+        if not isinstance(results, list):
+            logger.warning(
+                f"Inc42 search API returned {type(results).__name__}, expected a list"
+            )
+            return []
+
+        elapsed = time.perf_counter() - start
+        logger.info(
+            f"  Inc42 search API returned {len(results)} result(s) "
+            f"for '{company}' in {elapsed:.2f}s"
+        )
+        return results
+
+    def get_company_article_links(
+        self,
+        search_url: str,
+        domain: str,
+        link_contains: str,
+        company: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        max_pages: int = 10,
+        max_articles: int = 20,
+    ) -> list[str]:
+        """
+        Collect Inc42 article URLs for `company` from Inc42's search API.
+
+        Inc42's on-site search renders client-side, so there is no search-results
+        markup to parse — its `?s=` page serves a generic article rail identical
+        for every query. The API the site itself calls returns permalinks and ISO
+        publish dates directly, so this skips the listing parsers entirely rather
+        than reusing them the way the other sources do.
+
+        `search_url` is that API endpoint, not a `{query}` template — it takes the
+        company name as a POST form field, so `_build_search_url` does not apply.
+
+        The API answers with a fixed handful of most-relevant results and ignores
+        every paging parameter, so `max_pages` is unused here and a date range
+        narrows those results rather than reaching further back through the
+        archive. Use the listing scrape plus an entity gate for older coverage.
+        """
+        logger.info(f"  Company search API for '{company}': {search_url}")
+        links: list[str] = []
+        seen: set[str] = set()
+
+        for item in self._search_results(search_url, company):
+            if not isinstance(item, dict):
+                continue
+            meta = item.get("meta_data") or {}
+            permalink = (meta.get("permalink") or "").strip()
+            if not permalink:
+                continue
+
+            parsed = urlparse(permalink)
+            if domain not in parsed.netloc or not parsed.path.strip("/"):
+                continue
+            # Normalised the same way the listing parser builds its URLs, so an
+            # article found by both paths dedupes to one stored row.
+            clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            if clean_url in seen:
+                continue
+
+            if start_date and end_date:
+                date = _parse_iso_datetime(item.get("post_date_ts") or "")
+                if date is None or not (start_date <= date <= end_date):
+                    continue
+
+            seen.add(clean_url)
+            links.append(clean_url)
+            if len(links) >= max_articles:
+                break
+
+        logger.info(f"  Collected {len(links)} Inc42 link(s) for '{company}'")
+        return links
+
     def extract_article(
         self, url: str
     ) -> tuple[Optional[str], Optional[str], Optional[datetime]]:

@@ -96,8 +96,9 @@ def _scrape_links(
 
     When `company` is given, the source's on-site search (`search_url`) is used
     instead of its section listing, pulling that company's news from the site's
-    archive. Date-range pagination still applies when both dates and
-    `paginate: true` are set.
+    archive. Dates are always passed on the company path: for a search they are a
+    filter on the results, not a pagination concern, and a source that cannot
+    paginate simply stops after its first page of results.
     """
     if company:
         return scraper.get_company_article_links(
@@ -105,8 +106,8 @@ def _scrape_links(
             domain=source["domain"],
             link_contains=source["link_contains"],
             company=company,
-            start_date=dt_start if source.get("paginate", False) else None,
-            end_date=dt_end if source.get("paginate", False) else None,
+            start_date=dt_start,
+            end_date=dt_end,
             max_pages=source.get("max_pages", 10),
             max_articles=max_articles,
         )
