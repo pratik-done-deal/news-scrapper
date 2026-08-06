@@ -212,6 +212,36 @@ class WatchlistScrapeRequest(BaseModel):
         return self
 
 
+class EntitySummary(BaseModel):
+    """A company DB entity as the UI refers to it, plus the name its news is
+    filed under in the news graph."""
+
+    ref: str = Field(..., description="Company DB reference, e.g. 'S5123'")
+    entity_type: str
+    entity_id: int
+    company_name: str
+    brand_name: Optional[str] = None
+    website: Optional[str] = None
+    search_term: str = Field(
+        ..., description="Name the news graph is searched by — brand where one exists"
+    )
+
+
+class EntityNewsResponse(BaseModel):
+    """A paginated deal feed with the entity it was resolved from.
+
+    Carries the entity so the UI can show which company DB record produced the
+    feed without a second call — and so an empty `items` is attributable to the
+    company having no extracted deals rather than to a failed lookup.
+    """
+
+    entity: EntitySummary
+    total: int
+    page: int
+    page_size: int
+    items: list[DealWithArticleResponse]
+
+
 class WatchlistEntryResponse(BaseModel):
     entity_type: str
     entity_id: int

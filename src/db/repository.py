@@ -13,23 +13,29 @@ def _company_id(name: str) -> str:
 
 from neo4j import GraphDatabase
 
-from .models import SCHEMA_CONSTRAINTS, SCHEMA_INDEXES
+from .models import COMPANY_DEAL_RELS, ROLE_TO_REL, SCHEMA_CONSTRAINTS, SCHEMA_INDEXES
 
 logger = logging.getLogger(__name__)
 
-# Maps company role → Cypher relationship type
-_ROLE_TO_REL = {
-    "buyer": "BOUGHT",
-    "seller": "SOLD",
-    "investor": "INVESTED_IN",
-    "company": "INVOLVED_IN",
+
+# The LLM sometimes writes a placeholder instead of leaving a party null —
+# "Not specified" for the buyers in an unattributed block deal, say. Stored
+# verbatim these become Company nodes that accumulate relationships across
+# unrelated deals, so they are dropped at the boundary.
+_PLACEHOLDER_NAMES = {
+    "n/a", "na", "none", "null", "not specified", "unspecified",
+    "not disclosed", "undisclosed", "not applicable", "unknown",
+    "not available", "not mentioned", "various", "others",
 }
 
 
 def _split_names(raw: Optional[str]) -> list[str]:
     if not raw:
         return []
-    return [n.strip() for n in raw.split(",") if n.strip()]
+    return [
+        n.strip() for n in raw.split(",")
+        if n.strip() and n.strip().lower().strip(".") not in _PLACEHOLDER_NAMES
+    ]
 
 
 def _roles_for_deal_type(deal_type: Optional[str]) -> tuple[str, str]:
@@ -226,12 +232,12 @@ class NewsRepository:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         with self._session() as session:
             result = session.run(
-                """
+                f"""
                 MATCH (a:Article)-[:HAS_DEAL]->(d:Deal)
                 WHERE a.is_processed = true
                   AND a.duplicate_of IS NULL
                   AND a.scraped_at >= $cutoff
-                OPTIONAL MATCH (co:Company)-[:BOUGHT|SOLD|INVESTED_IN|INVOLVED_IN]->(d)
+                OPTIONAL MATCH (co:Company)-[:{COMPANY_DEAL_RELS}]->(d)
                 RETURN a.id AS id, a.title AS title, a.content AS content,
                        d.id AS deal_id, d.deal_value AS deal_value,
                        [name IN collect(DISTINCT co.name) WHERE name IS NOT NULL] AS parties
@@ -273,6 +279,7 @@ class NewsRepository:
         country: Optional[str],
         deal_type: Optional[str],
         summary: Optional[str],
+        target_company: Optional[str] = None,
     ) -> str:
         new_deal_id = str(uuid.uuid4())
         extracted_at = datetime.now(timezone.utc).isoformat()
@@ -313,39 +320,36 @@ class NewsRepository:
             ).single()
             deal_id = record["deal_id"]
 
-            # Create Company nodes and relationships for buyers
-            buyer_rel = _ROLE_TO_REL[buyer_role]
-            for name in _split_names(buyer):
-                canonical = _normalize_company_name(name)
-                session.run(
-                    f"""
-                    MERGE (c:Company {{name: $name}})
-                    ON CREATE SET c.id = $company_id
-                    WITH c
-                    MATCH (d:Deal {{id: $deal_id}})
-                    MERGE (c)-[:{buyer_rel}]->(d)
-                    """,
-                    name=canonical,
-                    company_id=_company_id(canonical),
-                    deal_id=deal_id,
-                )
-
-            # Create Company nodes and relationships for sellers
-            seller_rel = _ROLE_TO_REL[seller_role]
-            for name in _split_names(seller):
-                canonical = _normalize_company_name(name)
-                session.run(
-                    f"""
-                    MERGE (c:Company {{name: $name}})
-                    ON CREATE SET c.id = $company_id
-                    WITH c
-                    MATCH (d:Deal {{id: $deal_id}})
-                    MERGE (c)-[:{seller_rel}]->(d)
-                    """,
-                    name=canonical,
-                    company_id=_company_id(canonical),
-                    deal_id=deal_id,
-                )
+            # Create Company nodes and relationships, one role at a time. The
+            # target is linked last and only when it is not already a party, so
+            # a company named as both buyer/seller and subject keeps the more
+            # specific role instead of gaining a redundant ABOUT edge.
+            parties = {
+                _normalize_company_name(n)
+                for n in _split_names(buyer) + _split_names(seller)
+            }
+            for role, raw in (
+                (buyer_role, buyer),
+                (seller_role, seller),
+                ("target", target_company),
+            ):
+                rel = ROLE_TO_REL[role]
+                for name in _split_names(raw):
+                    canonical = _normalize_company_name(name)
+                    if role == "target" and canonical in parties:
+                        continue
+                    session.run(
+                        f"""
+                        MERGE (c:Company {{name: $name}})
+                        ON CREATE SET c.id = $company_id
+                        WITH c
+                        MATCH (d:Deal {{id: $deal_id}})
+                        MERGE (c)-[:{rel}]->(d)
+                        """,
+                        name=canonical,
+                        company_id=_company_id(canonical),
+                        deal_id=deal_id,
+                    )
 
         logger.debug(f"Deal saved for article {article_id}")
         return deal_id

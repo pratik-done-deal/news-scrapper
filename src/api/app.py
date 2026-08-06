@@ -11,7 +11,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from neo4j import GraphDatabase
 
 from .job_manager import JobManager
-from .routes import analytics, articles, companies, company_scrape, deals, extract, scrape
+from .routes import (
+    analytics,
+    articles,
+    companies,
+    company_scrape,
+    deals,
+    entities,
+    extract,
+    scrape,
+)
 from ..agent import NewsAgent
 from ..db.mysql_dao import MySQLConfig, MySQLDAO, MySQLNotConfigured
 from ..db.queries import Neo4jConnection
@@ -112,6 +121,7 @@ app.include_router(articles.router, prefix="/api/v1")
 app.include_router(companies.router, prefix="/api/v1")
 app.include_router(company_scrape.router, prefix="/api/v1")
 app.include_router(deals.router, prefix="/api/v1")
+app.include_router(entities.router, prefix="/api/v1")
 app.include_router(scrape.router, prefix="/api/v1")
 app.include_router(extract.router, prefix="/api/v1")
 app.include_router(analytics.router, prefix="/api/v1")

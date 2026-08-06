@@ -1,3 +1,21 @@
+# Maps company role → Cypher relationship type. Shared by the write path
+# (repository) and the read path (queries) so the two never drift apart.
+ROLE_TO_REL = {
+    "buyer": "BOUGHT",
+    "seller": "SOLD",
+    "investor": "INVESTED_IN",
+    "company": "INVOLVED_IN",
+    # The deal's subject rather than a party to it: the company whose shares or
+    # assets changed hands. A stake sale links its investor as SOLD and the
+    # purchasers as BOUGHT, so the listed company itself only reaches the graph
+    # through this relationship.
+    "target": "ABOUT",
+}
+
+# Every way a Company can attach to a Deal. Query sites that mean "any company
+# on this deal" must use this, or they silently drop whichever role is missing.
+COMPANY_DEAL_RELS = "|".join(ROLE_TO_REL.values())
+
 SCHEMA_CONSTRAINTS = [
     "CREATE CONSTRAINT article_id IF NOT EXISTS FOR (a:Article) REQUIRE a.id IS UNIQUE",
     "CREATE CONSTRAINT article_url IF NOT EXISTS FOR (a:Article) REQUIRE a.url IS UNIQUE",

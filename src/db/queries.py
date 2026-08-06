@@ -6,7 +6,7 @@ from uuid import UUID
 from neo4j import Driver
 
 from ..processor.company_signal import CompanySignalSnapshot
-from .models import SCHEMA_CONSTRAINTS, SCHEMA_INDEXES
+from .models import COMPANY_DEAL_RELS, ROLE_TO_REL, SCHEMA_CONSTRAINTS, SCHEMA_INDEXES
 
 
 class Neo4jConnection:
@@ -146,11 +146,13 @@ def search_articles_by_company_name(
 
     Traverses the deal graph the extractor already built:
 
-        (Company)-[:BOUGHT|SOLD|INVESTED_IN|INVOLVED_IN]->(Deal)<-[:HAS_DEAL]-(Article)
+        (Company)-[:BOUGHT|SOLD|INVESTED_IN|INVOLVED_IN|ABOUT]->(Deal)<-[:HAS_DEAL]-(Article)
 
     so results are exactly the deals the company takes part in — precise and
     already filtered for relevance — each carrying the article it was extracted
-    from. The rows share the shape of GET /deals (DealWithArticleResponse), just
+    from. ABOUT is what makes a stake sale reachable from the listed company
+    whose shares moved: it is neither the buyer nor the seller of its own shares.
+    The rows share the shape of GET /deals (DealWithArticleResponse), just
     scoped to one company and orderable by article publish date. Companies that
     merely get mentioned in passing are excluded because they never produced such
     a deal link.
@@ -170,7 +172,7 @@ def search_articles_by_company_name(
     where = "WHERE " + " AND ".join(conditions)
 
     match_clause = (
-        "MATCH (c:Company)-[:BOUGHT|SOLD|INVESTED_IN|INVOLVED_IN]->(d:Deal)"
+        f"MATCH (c:Company)-[:{COMPANY_DEAL_RELS}]->(d:Deal)"
         "<-[:HAS_DEAL]-(art:Article)"
     )
 
@@ -528,13 +530,7 @@ def analytics_top_buyers(
     role: str = "buyer",
     limit: int = 10,
 ) -> list[dict]:
-    rel_map = {
-        "buyer": "BOUGHT",
-        "seller": "SOLD",
-        "investor": "INVESTED_IN",
-        "company": "INVOLVED_IN",
-    }
-    rel_type = rel_map.get(role, "BOUGHT")
+    rel_type = ROLE_TO_REL.get(role, "BOUGHT")
 
     with conn.session() as session:
         result = session.run(

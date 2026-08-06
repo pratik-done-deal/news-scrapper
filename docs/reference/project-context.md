@@ -56,15 +56,21 @@ Process 2 — P2 Consumer (article-processor)
 | `(Company)-[:SOLD]->(Deal)` | Target in acquisition / divesting party |
 | `(Company)-[:INVESTED_IN]->(Deal)` | VC/PE investor in funding round |
 | `(Company)-[:INVOLVED_IN]->(Deal)` | Startup receiving investment |
+| `(Company)-[:ABOUT]->(Deal)` | Deal's subject when it is neither party — the listed company whose shares moved in a stake sale |
 
-### Role → Relationship Mapping (`repository.py`)
+### Role → Relationship Mapping (`db/models.py`)
+
+Defined in `models.py`, imported by both `repository.py` (write) and `queries.py`
+(read) so the two cannot drift. `COMPANY_DEAL_RELS` joins them into the
+`BOUGHT|SOLD|...` pattern every "any company on this deal" query must use.
 
 ```python
-_ROLE_TO_REL = {
+ROLE_TO_REL = {
     "buyer":    "BOUGHT",
     "seller":   "SOLD",
     "investor": "INVESTED_IN",
     "company":  "INVOLVED_IN",
+    "target":   "ABOUT",
 }
 
 # funding_round → (investor, company); everything else → (buyer, seller)

@@ -128,6 +128,7 @@ def main() -> None:
                 article_id=article_id,
                 buyer=deal.buyer,
                 seller=deal.seller,
+                target_company=deal.target_company,
                 deal_value=deal.deal_value,
                 sector=deal.sector,
                 sub_sector=deal.sub_sector,

@@ -363,6 +363,7 @@ def _filter_and_extract_articles(
                     article_id=article_id,
                     buyer=deal.buyer,      # split into company_deals by repo
                     seller=deal.seller,    # split into company_deals by repo
+                    target_company=deal.target_company,  # subject when it is neither party
                     deal_value=deal.deal_value,
                     sector=deal.sector,
                     sub_sector=deal.sub_sector,
