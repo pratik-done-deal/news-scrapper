@@ -13,6 +13,7 @@ from .processor.company_signal import deal_amount_token, is_duplicate_of_deal
 from .processor.extractor import DealExtractor
 from .processor.filter import NewsFilter
 from .processor.watchlist import gate_articles
+from .scraper.rss_scraper import RSSScraper
 from .scraper.web_scraper import (
     CNBCScraper,
     EntrackrScraper,
@@ -84,6 +85,27 @@ def _ensure_worker_logging() -> None:
     )
 
 
+def _build_scraper(
+    source: dict,
+    company: Optional[str],
+    dt_start: Optional[datetime],
+    dt_end: Optional[datetime],
+    scraper_kwargs: dict,
+) -> tuple[WebScraper, str]:
+    """Pick the scraper for this job and the listing URL it should read.
+
+    RSS covers the routine firehose: one request per source, publisher-supplied
+    dates, and often the full article body — so it replaces both the listing walk
+    and the per-article fetch. What a feed cannot do is search or reach back more
+    than a few days, so a company-scoped job or an explicit date range still runs
+    through the site scraper, which is what `paginate`/`search_url` exist for.
+    """
+    rss_url = source.get("rss_url")
+    if rss_url and not company and not (dt_start and dt_end):
+        return RSSScraper(**scraper_kwargs), rss_url
+    return SCRAPER_REGISTRY[source.get("scraper", "et")](**scraper_kwargs), source["url"]
+
+
 def _scrape_links(
     scraper: WebScraper,
     source: dict,
@@ -91,6 +113,7 @@ def _scrape_links(
     dt_start: Optional[datetime],
     dt_end: Optional[datetime],
     company: Optional[str] = None,
+    listing_url: Optional[str] = None,
 ) -> list[str]:
     """Collect article URLs for one source without fetching article content.
 
@@ -99,7 +122,11 @@ def _scrape_links(
     archive. Dates are always passed on the company path: for a search they are a
     filter on the results, not a pagination concern, and a source that cannot
     paginate simply stops after its first page of results.
+
+    `listing_url` is what the non-company path reads — the source's section URL,
+    or its feed when `_build_scraper` chose RSS.
     """
+    listing_url = listing_url or source["url"]
     if company:
         return scraper.get_company_article_links(
             search_url=source["search_url"],
@@ -114,7 +141,7 @@ def _scrape_links(
     use_date_range = dt_start and dt_end and source.get("paginate", False)
     if use_date_range:
         return scraper.get_article_links_in_date_range(
-            source_url=source["url"],
+            source_url=listing_url,
             domain=source["domain"],
             link_contains=source["link_contains"],
             start_date=dt_start,
@@ -122,7 +149,7 @@ def _scrape_links(
             max_pages=source.get("max_pages", 10),
         )
     return scraper.get_article_links(
-        source_url=source["url"],
+        source_url=listing_url,
         domain=source["domain"],
         link_contains=source["link_contains"],
         max_articles=max_articles,
@@ -151,8 +178,10 @@ def _scrape_source_worker(
     logger.info(f"{_tag(SCRAPER_LABEL, process)} Starting scrape for [{source_name}]{scope}")
 
     try:
-        scraper_type = source.get("scraper", "et")
-        scraper = SCRAPER_REGISTRY[scraper_type](**scraper_kwargs)
+        scraper, listing_url = _build_scraper(source, company, dt_start, dt_end, scraper_kwargs)
+        scraper.source_config = source
+        if isinstance(scraper, RSSScraper):
+            logger.info(f"  {_tag(SCRAPER_LABEL, source_name)} Using RSS feed: {listing_url}")
         repo = NewsRepository(
             uri=db_config.neo4j_uri,
             user=db_config.neo4j_user,
@@ -162,7 +191,9 @@ def _scrape_source_worker(
             ensure_schema=False,
         )
 
-        links = _scrape_links(scraper, source, max_articles, dt_start, dt_end, company)
+        links = _scrape_links(
+            scraper, source, max_articles, dt_start, dt_end, company, listing_url
+        )
         logger.info(f"  {_tag(SCRAPER_LABEL, source_name)} Found {len(links)} links")
 
         articles: list[dict] = []
