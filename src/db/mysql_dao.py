@@ -12,7 +12,6 @@ column names) cannot be parameterized and go through `_quote_identifier()`.
 """
 
 import logging
-import os
 import re
 import threading
 from contextlib import contextmanager
@@ -22,6 +21,8 @@ from typing import Any, Optional, Sequence, Union
 
 import pymysql
 from pymysql.cursors import DictCursor
+
+from ..config import AppConfig, get_config
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,8 @@ def _quote_identifier(name: str) -> str:
 class MySQLConfig:
     """Connection settings for the company MySQL database.
 
-    Credentials come from the environment; tuning knobs default from
+    Credentials come from `src/config.py` under `mysql` (overridable with
+    --mysql-host and friends); tuning knobs default from
     `config/settings.yaml` under `company_mysql`.
     """
 
@@ -101,32 +103,43 @@ class MySQLConfig:
     charset: str = "utf8mb4"
 
     @staticmethod
-    def is_configured() -> bool:
-        """True when the minimum env vars for a connection are present."""
-        return bool(os.environ.get("MYSQL_HOST") and os.environ.get("MYSQL_DATABASE"))
+    def is_configured(config: Optional[AppConfig] = None) -> bool:
+        """True when the minimum settings for a connection are present."""
+        return (config or get_config()).mysql.is_configured()
 
     @classmethod
-    def from_env(cls, settings: Optional[dict] = None) -> "MySQLConfig":
-        cfg = (settings or {}).get("company_mysql", {}) or {}
+    def from_config(
+        cls,
+        settings: Optional[dict] = None,
+        config: Optional[AppConfig] = None,
+    ) -> "MySQLConfig":
+        """Credentials from `src/config.py`, tuning from `config/settings.yaml`.
 
-        host = os.environ.get("MYSQL_HOST") or cfg.get("host")
-        database = os.environ.get("MYSQL_DATABASE") or cfg.get("database")
-        user = os.environ.get("MYSQL_USER") or cfg.get("username")
-        password = os.environ.get("MYSQL_PASSWORD")
+        The two are not interchangeable: host/user/password/database identify a
+        deployment and come in on the command line, while pool size and
+        timeouts are the same everywhere and stay in the YAML.
+        """
+        cfg = (settings or {}).get("company_mysql", {}) or {}
+        mysql = (config or get_config()).mysql
+
+        host = mysql.host or cfg.get("host")
+        database = mysql.database or cfg.get("database")
+        user = mysql.user or cfg.get("username")
+        password = mysql.password
 
         missing = [
             name
             for name, value in (
-                ("MYSQL_HOST", host),
-                ("MYSQL_DATABASE", database),
-                ("MYSQL_USER", user),
+                ("--mysql-host", host),
+                ("--mysql-database", database),
+                ("--mysql-user", user),
             )
             if not value
         ]
         # An empty password is valid (local dev servers often have one), so only
-        # an unset variable counts as missing.
+        # an unset one counts as missing.
         if password is None:
-            missing.append("MYSQL_PASSWORD")
+            missing.append("--mysql-password")
         if missing:
             raise MySQLNotConfigured(f"Missing MySQL settings: {', '.join(missing)}")
 
@@ -135,7 +148,7 @@ class MySQLConfig:
             user=user,
             password=password,
             database=database,
-            port=int(os.environ.get("MYSQL_PORT") or cfg.get("port", 3306)),
+            port=mysql.port or int(cfg.get("port", 3306)),
             pool_size=int(cfg.get("pool_size", 5)),
             connect_timeout=int(cfg.get("connect_timeout", 10)),
             read_timeout=int(cfg.get("read_timeout", 30)),
@@ -358,5 +371,5 @@ class MySQLDAO:
 
 
 def build_dao(settings: Optional[dict] = None) -> MySQLDAO:
-    """Construct a DAO from env vars plus `config/settings.yaml` defaults."""
-    return MySQLDAO(MySQLConfig.from_env(settings))
+    """Construct a DAO from `src/config.py` plus `config/settings.yaml` defaults."""
+    return MySQLDAO(MySQLConfig.from_config(settings))

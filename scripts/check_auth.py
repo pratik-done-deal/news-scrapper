@@ -20,9 +20,8 @@ Usage:
     python scripts/check_auth.py --session <id> --endpoint /api/v1/news-scrapper/deals
     python scripts/check_auth.py --session <id> --json       # machine-readable
 
-Env (read from .env / environment):
-    AUTH_SERVICE_BASE_URL, AUTH_VALIDATE_PATH, AUTH_TIMEOUT_SECONDS
-    Or pass --base-url to override without editing .env.
+Configuration comes from `src/config.py` under `auth`; --auth-base-url and
+the other flags from --help override it for one run.
 """
 import argparse
 import json
@@ -31,17 +30,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.paths import ENV_PATH
-
-try:
-    from dotenv import load_dotenv
-    load_dotenv(ENV_PATH)
-except Exception:
-    pass
-
 from fastapi import HTTPException
 
 from src.api.auth import EXEMPT_ROUTES, AuthClient, AuthConfig
+from src.config import ConfigError, add_config_arguments, load_config
 
 PROBE_ENDPOINT = "/api/v1/news-scrapper/deals"
 
@@ -95,18 +87,19 @@ def probe(client: AuthClient, session_id: str, endpoint: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--session", required=True, help="A live Done Deal session id")
-    parser.add_argument("--base-url", help="Override AUTH_SERVICE_BASE_URL")
     parser.add_argument("--endpoint", help=f"Validate one endpoint (default {PROBE_ENDPOINT})")
     parser.add_argument("--all-routes", action="store_true", help="Validate every endpoint this API serves")
     parser.add_argument("--json", action="store_true", dest="as_json", help="Machine-readable output")
+    add_config_arguments(parser, only=("auth",))
     args = parser.parse_args()
 
     plain = args.as_json or not sys.stdout.isatty()
 
+    app_config = load_config(args)
     try:
-        config = AuthConfig.from_env() if not args.base_url else AuthConfig(base_url=args.base_url)
-    except EnvironmentError as exc:
-        print(f"{exc}\n\nPass --base-url to check without setting it.", file=sys.stderr)
+        config = AuthConfig.from_settings(app_config.auth)
+    except ConfigError as exc:
+        print(f"{exc}\n\nPass --auth-base-url to check without changing the default.", file=sys.stderr)
         return 2
 
     # No caching: two probes of the same endpoint must both hit the network,

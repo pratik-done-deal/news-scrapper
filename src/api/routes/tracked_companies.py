@@ -16,7 +16,6 @@ instead of resolving a name through another system on every request.
 """
 
 import logging
-import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import Optional
@@ -76,6 +75,7 @@ def register_company(
     settings = request.app.state.settings
     sources_config = request.app.state.sources_config
     executor: ThreadPoolExecutor = request.app.state.executor
+    config = request.app.state.config
 
     repo: NewsRepository = request.app.state.repo
     try:
@@ -97,11 +97,11 @@ def register_company(
         try:
             agent = NewsAgent(
                 settings,
-                neo4j_uri=os.environ["NEO4J_URI"],
-                neo4j_user=os.environ["NEO4J_USER"],
-                neo4j_password=os.environ["NEO4J_PASSWORD"],
-                neo4j_database=os.environ.get("NEO4J_DATABASE", "neo4j"),
-                groq_api_key=os.environ["GROQ_API_KEY"],
+                neo4j_uri=config.neo4j.uri,
+                neo4j_user=config.neo4j.user,
+                neo4j_password=config.neo4j.password,
+                neo4j_database=config.neo4j.database,
+                groq_api_key=config.groq.api_key,
             )
             result = agent.scrape_company(
                 company=search_term,

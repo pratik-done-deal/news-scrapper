@@ -9,20 +9,19 @@ This is the one place that writes to MySQL, so it opens its own connection
 instead of going through `MySQLDAO` (which is read-only by construction).
 
 Safety: the target database name must end in `_test`, and must not be the
-database in `MYSQL_DATABASE`, unless `--force` is passed. The schema file drops
+configured `--mysql-database`, unless `--force` is passed. The schema file drops
 its three tables before recreating them.
 
 Usage:
-    python scripts/seed_test_company_db.py
+    python scripts/seed_test_company_db.py --mysql-user root --mysql-password ""
     python scripts/seed_test_company_db.py --database company_db_test
     python scripts/seed_test_company_db.py --verify-only
 
-Env (read from .env / environment):
-    MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD   — server to connect to
-    TEST_MYSQL_DATABASE                                  — target DB (default company_db_test)
+The server to connect to comes from `src/config.py` under `mysql`, overridable
+with --mysql-host/--mysql-port/--mysql-user/--mysql-password. The target
+database defaults to company_db_test; --database picks another.
 """
 import argparse
-import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -32,12 +31,7 @@ import pymysql
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass
-
+from src.config import add_config_arguments, get_config, load_config
 from src.db import mysql_queries as mq
 from src.db.mysql_dao import MySQLConfig, MySQLDAO
 
@@ -105,16 +99,14 @@ def split_statements(sql: str) -> list[str]:
 
 
 def _server_kwargs() -> dict:
-    host = os.environ.get("MYSQL_HOST", "127.0.0.1")
-    user = os.environ.get("MYSQL_USER")
-    password = os.environ.get("MYSQL_PASSWORD")
-    if not user or password is None:
-        raise SystemExit("error: MYSQL_USER and MYSQL_PASSWORD must be set")
+    mysql = get_config().mysql
+    if not mysql.user or mysql.password is None:
+        raise SystemExit("error: --mysql-user and --mysql-password must be given")
     return {
-        "host": host,
-        "port": int(os.environ.get("MYSQL_PORT", 3306)),
-        "user": user,
-        "password": password,
+        "host": mysql.host or "127.0.0.1",
+        "port": mysql.port or 3306,
+        "user": mysql.user,
+        "password": mysql.password,
         "charset": "utf8mb4",
         "autocommit": True,
     }
@@ -144,11 +136,12 @@ def load_schema(database: str) -> tuple[int, int]:
 
 def verify(database: str) -> None:
     """Report what the production queries return against the seeded data."""
+    mysql = get_config().mysql
     config = MySQLConfig(
-        host=os.environ.get("MYSQL_HOST", "127.0.0.1"),
-        port=int(os.environ.get("MYSQL_PORT", 3306)),
-        user=os.environ["MYSQL_USER"],
-        password=os.environ["MYSQL_PASSWORD"],
+        host=mysql.host or "127.0.0.1",
+        port=mysql.port or 3306,
+        user=mysql.user,
+        password=mysql.password,
         database=database,
     )
     dao = MySQLDAO(config)
@@ -178,12 +171,14 @@ def verify(database: str) -> None:
 
 
 def main() -> int:
-    default_db = os.environ.get("TEST_MYSQL_DATABASE", "company_db_test")
+    default_db = "company_db_test"
     parser = argparse.ArgumentParser(description="Seed a test company MySQL database")
     parser.add_argument("--database", default=default_db, help=f"Target database (default {default_db})")
     parser.add_argument("--verify-only", action="store_true", help="Skip loading, just report counts")
     parser.add_argument("--force", action="store_true", help="Allow a database name not ending in _test")
+    add_config_arguments(parser, only=("mysql",))
     args = parser.parse_args()
+    config = load_config(args)
 
     database = args.database
     if not args.force:
@@ -194,9 +189,9 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
-        if database == os.environ.get("MYSQL_DATABASE"):
+        if database == config.mysql.database:
             print(
-                f"error: {database!r} is the database in MYSQL_DATABASE; refusing to overwrite it.",
+                f"error: {database!r} is the configured --mysql-database; refusing to overwrite it.",
                 file=sys.stderr,
             )
             return 2

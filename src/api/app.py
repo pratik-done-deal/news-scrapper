@@ -1,10 +1,8 @@
 import logging
-import os
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from dotenv import load_dotenv
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from neo4j import GraphDatabase
@@ -24,38 +22,24 @@ from .routes import (
     tracked_companies,
 )
 from ..agent import NewsAgent
+from ..config import get_config
 from ..db.mysql_dao import MySQLConfig, MySQLDAO, MySQLNotConfigured
 from ..db.queries import Neo4jConnection
 from ..db.repository import NewsRepository
 from ..logging_config import setup_logging
-from ..paths import ENV_PATH, load_settings, load_sources_config
+from ..paths import load_settings, load_sources_config
 from ..scheduler.service import SchedulerService
-
-load_dotenv(ENV_PATH)
 
 logger = logging.getLogger(__name__)
 
-_TRUTHY = {"1", "true", "yes", "on"}
-
-
-def _scheduler_enabled() -> bool:
-    """Whether this process owns the scrape/extraction timers.
-
-    The scheduler is in-process and holds no cross-process lock, so exactly one
-    instance may run it. Extra API replicas must set SCHEDULER_ENABLED=false or
-    every tick is duplicated — duplicate fetches, duplicate Groq spend, and
-    concurrent writes to the same Neo4j nodes.
-    """
-    return os.environ.get("SCHEDULER_ENABLED", "true").strip().lower() in _TRUTHY
-
 
 def _build_mysql_dao(settings: dict) -> Optional[MySQLDAO]:
-    """Company MySQL is optional: without env vars the API starts without it."""
+    """Company MySQL is optional: unconfigured, the API starts without it."""
     if not MySQLConfig.is_configured():
-        logger.info("Company MySQL not configured (MYSQL_HOST/MYSQL_DATABASE unset); skipping")
+        logger.info("Company MySQL not configured (--mysql-host/--mysql-database unset); skipping")
         return None
     try:
-        dao = MySQLDAO(MySQLConfig.from_env(settings))
+        dao = MySQLDAO(MySQLConfig.from_config(settings))
     except MySQLNotConfigured as exc:
         logger.warning("Company MySQL partially configured, skipping: %s", exc)
         return None
@@ -70,15 +54,15 @@ def _build_auth_client() -> Optional[AuthClient]:
 
     Unlike MySQL, a missing configuration is fatal: starting without it would
     serve every endpoint unauthenticated. Turning auth off has to be a
-    deliberate `AUTH_ENABLED=false`, and it is loud when it happens.
+    deliberate `--auth-enabled false`, and it is loud when it happens.
     """
     if not auth_enabled():
         logger.warning(
-            "AUTH_ENABLED=false — every endpoint is being served without session "
+            "Auth is disabled — every endpoint is being served without session "
             "validation. This is for local development only."
         )
         return None
-    return AuthClient(AuthConfig.from_env())
+    return AuthClient(AuthConfig.from_settings())
 
 
 @asynccontextmanager
@@ -87,16 +71,12 @@ async def lifespan(app: FastAPI):
     # record — scheduler ticks included — is discarded.
     setup_logging()
 
-    neo4j_uri = os.environ.get("NEO4J_URI", "neo4j://127.0.0.1:7687")
-    neo4j_user = os.environ.get("NEO4J_USER", "neo4j")
-    neo4j_password = os.environ.get("NEO4J_PASSWORD")
-    neo4j_database = os.environ.get("NEO4J_DATABASE", "neo4j")
-    groq_api_key = os.environ.get("GROQ_API_KEY")
-
-    if not neo4j_password:
-        raise EnvironmentError("NEO4J_PASSWORD is not set")
-    if not groq_api_key:
-        raise EnvironmentError("GROQ_API_KEY is not set")
+    config = get_config()
+    neo4j_uri = config.neo4j.uri
+    neo4j_user = config.neo4j.user
+    neo4j_password = config.require_neo4j_password()
+    neo4j_database = config.neo4j.database
+    groq_api_key = config.require_groq_api_key()
 
     settings = load_settings()
     sources_config = load_sources_config()
@@ -120,13 +100,20 @@ async def lifespan(app: FastAPI):
     )
     app.state.auth_client = _build_auth_client()
     app.state.mysql_dao = _build_mysql_dao(settings)
+    # Routes that build their own agent read this rather than calling
+    # get_config() again, so a test can swap the whole config on one app.
+    app.state.config = config
     app.state.settings = settings
     app.state.sources_config = sources_config
     app.state.job_manager = JobManager()
     app.state.executor = ThreadPoolExecutor(max_workers=2)
 
     app.state.scheduler_service = None
-    if _scheduler_enabled():
+    # The scheduler is in-process and holds no cross-process lock, so exactly
+    # one instance may run it. Extra API replicas must pass
+    # `--scheduler-enabled false` or every tick is duplicated — duplicate
+    # fetches, duplicate Groq spend, concurrent writes to the same Neo4j nodes.
+    if config.api.scheduler_enabled:
         scheduler_agent = NewsAgent(
             settings,
             neo4j_uri=neo4j_uri,
@@ -143,8 +130,8 @@ async def lifespan(app: FastAPI):
         app.state.scheduler_service.start()
     else:
         logger.warning(
-            "SCHEDULER_ENABLED=false — this instance serves API traffic only; "
-            "scrape and extraction timers must run on exactly one other instance"
+            "Scheduler disabled — this instance serves API traffic only; scrape "
+            "and extraction timers must run on exactly one other instance"
         )
 
     yield
@@ -173,7 +160,9 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:3000").split(","),
+    # Middleware is wired at import, before the lifespan runs, so this reads the
+    # config directly rather than `app.state.config`.
+    allow_origins=get_config().api.cors_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -2,34 +2,49 @@
 
 Single process on purpose: `src/api/app.py` starts an in-process APScheduler,
 so a second worker duplicates every scrape and extraction tick. To scale the
-HTTP layer, run additional instances with SCHEDULER_ENABLED=false rather than
-raising the worker count here.
+HTTP layer, run additional instances with `--scheduler-enabled false` rather
+than raising the worker count here.
 
-Env vars:
-    API_HOST    default 0.0.0.0
-    API_PORT    default 8000
-    API_RELOAD  default off — dev only, never set this in production
-    LOG_LEVEL   default INFO
+Configuration defaults live in `src/config.py`; every one of them can be
+overridden on this command line (`--help` lists them). The resolved config is
+exported to the environment before uvicorn starts, so `--api-reload true`,
+which runs the app in a child process, still sees what was passed here.
 """
 
-import os
+import argparse
+import sys
 
 import uvicorn
 
+from src.config import ConfigError, add_config_arguments, load_config
 from src.logging_config import setup_logging
 
-_TRUTHY = {"1", "true", "yes", "on"}
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="News scraping API server")
+    add_config_arguments(parser)
+    return parser.parse_args()
 
 
 def main() -> None:
+    config = load_config(parse_args())
     setup_logging()
+
+    # Fail here rather than inside uvicorn's lifespan, where the traceback is
+    # buried under a startup error.
+    try:
+        config.require_neo4j_password()
+        config.require_groq_api_key()
+    except ConfigError as exc:
+        sys.exit(f"Error: {exc}")
+
     uvicorn.run(
         "src.api.app:app",
-        host=os.environ.get("API_HOST", "0.0.0.0"),
-        port=int(os.environ.get("API_PORT", "8000")),
-        reload=os.environ.get("API_RELOAD", "false").strip().lower() in _TRUTHY,
+        host=config.api.host,
+        port=config.api.port,
+        reload=config.api.reload,
         workers=1,
-        log_level=os.environ.get("LOG_LEVEL", "info").lower(),
+        log_level=config.logging.level.lower(),
     )
 
 

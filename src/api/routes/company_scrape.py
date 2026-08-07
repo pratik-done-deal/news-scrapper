@@ -1,5 +1,4 @@
 import logging
-import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
@@ -58,6 +57,7 @@ def trigger_company_scrape(
     executor: ThreadPoolExecutor = request.app.state.executor
     settings = request.app.state.settings
     sources_config = request.app.state.sources_config
+    config = request.app.state.config
 
     sources = _select_sources(sources_config["sources"], body.sources)
     if not sources:
@@ -69,11 +69,11 @@ def trigger_company_scrape(
         try:
             agent = NewsAgent(
                 settings,
-                neo4j_uri=os.environ["NEO4J_URI"],
-                neo4j_user=os.environ["NEO4J_USER"],
-                neo4j_password=os.environ["NEO4J_PASSWORD"],
-                neo4j_database=os.environ.get("NEO4J_DATABASE", "neo4j"),
-                groq_api_key=os.environ["GROQ_API_KEY"],
+                neo4j_uri=config.neo4j.uri,
+                neo4j_user=config.neo4j.user,
+                neo4j_password=config.neo4j.password,
+                neo4j_database=config.neo4j.database,
+                groq_api_key=config.groq.api_key,
             )
             result = agent.scrape_company(
                 company=body.company,
@@ -146,6 +146,7 @@ def trigger_watchlist_scrape(
     executor: ThreadPoolExecutor = request.app.state.executor
     settings = request.app.state.settings
     sources_config = request.app.state.sources_config
+    config = request.app.state.config
     cfg = _watchlist_cfg(settings)
 
     sources = _select_sources(sources_config["sources"], body.sources)
@@ -186,11 +187,11 @@ def trigger_watchlist_scrape(
         try:
             agent = NewsAgent(
                 settings,
-                neo4j_uri=os.environ["NEO4J_URI"],
-                neo4j_user=os.environ["NEO4J_USER"],
-                neo4j_password=os.environ["NEO4J_PASSWORD"],
-                neo4j_database=os.environ.get("NEO4J_DATABASE", "neo4j"),
-                groq_api_key=os.environ["GROQ_API_KEY"],
+                neo4j_uri=config.neo4j.uri,
+                neo4j_user=config.neo4j.user,
+                neo4j_password=config.neo4j.password,
+                neo4j_database=config.neo4j.database,
+                groq_api_key=config.groq.api_key,
             )
             result = agent.scrape_watchlist(
                 entries=entries,

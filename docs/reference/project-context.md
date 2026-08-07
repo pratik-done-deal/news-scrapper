@@ -132,7 +132,7 @@ LLM settings: `temperature=0.1`, `response_format={"type": "json_object"}`, cont
 - **Pydantic v2:** `@field_validator` + `@classmethod`. `model_validator` for cross-field logic.
 - **Cypher:** Always `$param` parameterized. Never interpolate user-controlled strings into Cypher.
 - **Logging:** Format `[LABEL|source|process] message`. `P1 producer` = scraper process, `P2 consumer` = processing subprocess.
-- **Secrets:** Load from env / `.env`. Never hardcode. Never commit `.env` or `news_agent.log`.
+- **Secrets:** Passed as CLI flags, defaulting to empty in `src/config.py`. Never hardcode a real credential there; never commit `news_agent.log`.
 - **Scraper errors:** `extract_article()` must return `(None, None, None)` on any failure — never raise.
 
 ---

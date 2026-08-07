@@ -13,6 +13,7 @@ from src.api.dependencies import get_connection, get_job_manager
 from src.api.job_manager import JobManager
 from src.api.routes import tracked_companies
 from src.api.schemas import RegisterCompanyRequest
+from src.config import AppConfig
 from src.db.repository import NewsRepository
 
 REGISTERED = {
@@ -145,6 +146,7 @@ def build_client(registered=REGISTERED):
     app = FastAPI()
     app.include_router(tracked_companies.router, prefix="/api/v1/news-scrapper")
     app.state.settings = {"scraping": {}, "groq": {}}
+    app.state.config = AppConfig()
     app.state.sources_config = {"sources": [{"name": "Entrackr News", "search_url": "x{query}"}]}
     app.state.executor = RecordingExecutor()
     app.state.repo = MagicMock()

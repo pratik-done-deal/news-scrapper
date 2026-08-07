@@ -14,6 +14,7 @@ from src.api.dependencies import get_mysql_dao
 from src.api.job_manager import JobManager
 from src.api.routes import company_scrape
 from src.api.schemas import WatchlistScrapeRequest
+from src.config import AppConfig
 
 SOURCES = [
     {"name": "Entrackr News", "search_url": "https://entrackr.com/search?title={query}"},
@@ -62,6 +63,7 @@ def make_client(rows=ROWS, settings=SETTINGS, with_dao=True):
     app = FastAPI()
     app.include_router(company_scrape.router, prefix="/api/v1/news-scrapper")
     app.state.settings = settings
+    app.state.config = AppConfig()
     app.state.sources_config = {"sources": SOURCES}
     app.state.job_manager = JobManager()
     app.state.executor = RecordingExecutor()

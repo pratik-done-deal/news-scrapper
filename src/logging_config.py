@@ -12,27 +12,22 @@ Scrape workers are separate processes (`spawn`) that inherit the parent's
 stdout, so they log to the stream only: several processes rotating the same
 file concurrently loses and interleaves records.
 
-Env vars:
-    LOG_LEVEL         default INFO
-    LOG_FILE          path, relative to the repo root; "none" disables the file
-    LOG_MAX_BYTES     rotation threshold, default 50 MiB
-    LOG_BACKUP_COUNT  rotated files kept, default 5
+Settings come from `src/config.py` (`logging.level`, `logging.file`,
+`logging.max_bytes`, `logging.backup_count`), overridable with --log-level,
+--log-file, --log-max-bytes and --log-backup-count.
 """
 
 import logging
-import os
 import sys
 from contextvars import ContextVar
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
 
+from .config import get_config
 from .paths import PROJECT_ROOT
 
 LOG_FORMAT = "%(asctime)s [%(levelname)s] [%(processName)s] [%(profile_id)s] %(name)s: %(message)s"
-DEFAULT_LOG_FILE = "news_agent.log"
-DEFAULT_MAX_BYTES = 50 * 1024 * 1024
-DEFAULT_BACKUP_COUNT = 5
 _DISABLED = {"", "none", "off", "false", "0", "stdout"}
 
 # The authenticated caller, for the duration of one request. Set by the auth
@@ -65,18 +60,11 @@ def _install_record_factory() -> None:
 
 def log_file_path() -> Optional[Path]:
     """Resolved log file, or None when file logging is switched off."""
-    raw = os.environ.get("LOG_FILE", DEFAULT_LOG_FILE).strip()
+    raw = (get_config().logging.file or "").strip()
     if raw.lower() in _DISABLED:
         return None
     path = Path(raw)
     return path if path.is_absolute() else PROJECT_ROOT / path
-
-
-def _int_env(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name, default))
-    except (TypeError, ValueError):
-        return default
 
 
 def setup_logging(to_file: bool = True, force: bool = False) -> None:
@@ -88,8 +76,10 @@ def setup_logging(to_file: bool = True, force: bool = False) -> None:
     """
     _install_record_factory()
 
+    log_cfg = get_config().logging
+
     root = logging.getLogger()
-    root.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
+    root.setLevel(log_cfg.level.upper())
 
     if root.handlers and not force:
         return
@@ -114,8 +104,8 @@ def setup_logging(to_file: bool = True, force: bool = False) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         file_handler = RotatingFileHandler(
             path,
-            maxBytes=_int_env("LOG_MAX_BYTES", DEFAULT_MAX_BYTES),
-            backupCount=_int_env("LOG_BACKUP_COUNT", DEFAULT_BACKUP_COUNT),
+            maxBytes=log_cfg.max_bytes,
+            backupCount=log_cfg.backup_count,
             encoding="utf-8",
         )
     except OSError as exc:

@@ -20,18 +20,12 @@ one row per endpoint instead of one per company id.
 which is us, not the browser. We overwrite it with our own view of the peer, as
 ga-integration does, so downstream logging sees the real client.
 
-Env vars:
-    AUTH_ENABLED            "false" disables validation entirely — local dev
-                            only, and it logs a warning on every startup
-    AUTH_SERVICE_BASE_URL   e.g. https://qa.done.deals  (required when enabled)
-    AUTH_VALIDATE_PATH      default /api/company-service/v1/internal/token/validate
-    AUTH_TIMEOUT_SECONDS    default 5
-    AUTH_CACHE_TTL_SECONDS  default 30; 0 disables caching
-    AUTH_TRUST_PROXY_HEADERS  "true" to read the client IP from X-Forwarded-For
+Settings come from `src/config.py` under `auth`, overridable with
+--auth-enabled, --auth-base-url, --auth-validate-path, --auth-timeout-seconds,
+--auth-cache-ttl-seconds and --auth-trust-proxy-headers.
 """
 
 import logging
-import os
 import threading
 import time
 from typing import Any, Optional, Tuple
@@ -43,17 +37,15 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, ValidationError
 
 from . import API_PREFIX
+from ..config import DEFAULT_VALIDATE_PATH, AuthSettings, ConfigError, get_config
 from ..logging_config import profile_id_ctx
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_VALIDATE_PATH = "/api/company-service/v1/internal/token/validate"
 DEFAULT_TIMEOUT_SECONDS = 5.0
 DEFAULT_REFUSAL_DETAIL = "Not authorised for this endpoint"
 DEFAULT_CACHE_TTL_SECONDS = 30.0
 CACHE_MAX_ENTRIES = 10_000
-
-_TRUTHY = {"1", "true", "yes", "on"}
 
 # Endpoints that must answer without a session. Keyed by (method, route
 # template) so a path parameter can never accidentally widen an exemption.
@@ -106,33 +98,26 @@ class AuthConfig(BaseModel):
         return f"{self.base_url.rstrip('/')}/{self.validate_path.lstrip('/')}"
 
     @classmethod
-    def from_env(cls) -> "AuthConfig":
-        base_url = os.environ.get("AUTH_SERVICE_BASE_URL", "").strip()
+    def from_settings(cls, settings: Optional[AuthSettings] = None) -> "AuthConfig":
+        settings = settings if settings is not None else get_config().auth
+        base_url = (settings.service_base_url or "").strip()
         if not base_url:
-            raise EnvironmentError(
-                "AUTH_SERVICE_BASE_URL is not set. Every API route validates its "
-                "session against company-service; set it, or set AUTH_ENABLED=false "
-                "for local development."
+            raise ConfigError(
+                "The auth service base URL is not set. Every API route validates "
+                "its session against company-service; pass --auth-base-url, or "
+                "--auth-enabled false for local development."
             )
         return cls(
             base_url=base_url,
-            validate_path=os.environ.get("AUTH_VALIDATE_PATH", DEFAULT_VALIDATE_PATH).strip(),
-            timeout_seconds=_float_env("AUTH_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS),
-            cache_ttl_seconds=_float_env("AUTH_CACHE_TTL_SECONDS", DEFAULT_CACHE_TTL_SECONDS),
-            trust_proxy_headers=os.environ.get("AUTH_TRUST_PROXY_HEADERS", "false").strip().lower()
-            in _TRUTHY,
+            validate_path=(settings.validate_path or DEFAULT_VALIDATE_PATH).strip(),
+            timeout_seconds=settings.timeout_seconds,
+            cache_ttl_seconds=settings.cache_ttl_seconds,
+            trust_proxy_headers=settings.trust_proxy_headers,
         )
 
 
 def auth_enabled() -> bool:
-    return os.environ.get("AUTH_ENABLED", "true").strip().lower() in _TRUTHY
-
-
-def _float_env(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, default))
-    except (TypeError, ValueError):
-        return default
+    return get_config().auth.enabled
 
 
 class _TTLCache:

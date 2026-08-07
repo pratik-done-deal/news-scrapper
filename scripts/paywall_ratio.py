@@ -14,16 +14,15 @@ Usage:
 Env (read from .env / environment): NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, NEO4J_DATABASE
 """
 import argparse
-import os
 import re
+import sys
+from pathlib import Path
 
 from neo4j import GraphDatabase
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.config import ConfigError, add_config_arguments, load_config
 
 # Strong paywall signals — phrases sites inject when the full body is gated.
 _PAYWALL_MARKERS = [
@@ -61,12 +60,18 @@ def main() -> None:
     ap.add_argument("--min-chars", type=int, default=600,
                     help="bodies shorter than this are treated as truncated/paid")
     ap.add_argument("--source", default=None, help="limit to one source name")
+    add_config_arguments(ap, only=("neo4j",))
     args = ap.parse_args()
 
-    uri = os.environ.get("NEO4J_URI", "neo4j://127.0.0.1:7687")
-    user = os.environ.get("NEO4J_USER", "neo4j")
-    password = os.environ["NEO4J_PASSWORD"]
-    database = os.environ.get("NEO4J_DATABASE", "neo4j")
+    config = load_config(args)
+    try:
+        password = config.require_neo4j_password()
+    except ConfigError as exc:
+        raise SystemExit(f"Error: {exc}")
+
+    uri = config.neo4j.uri
+    user = config.neo4j.user
+    database = config.neo4j.database
 
     driver = GraphDatabase.driver(uri, auth=(user, password))
     cypher = "MATCH (a:Article) RETURN a.source AS source, a.title AS title, a.content AS content"

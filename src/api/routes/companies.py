@@ -1,4 +1,3 @@
-import os
 from datetime import date
 from typing import Optional
 from uuid import UUID
@@ -114,11 +113,11 @@ def generate_company_signal(
         snapshot = empty_signal_snapshot(str(company_id), company_name, horizon_days)
         return queries.save_company_signal_snapshot(conn, snapshot)
 
-    groq_api_key = os.environ.get("GROQ_API_KEY")
+    groq_api_key = request.app.state.config.groq.api_key
     if not groq_api_key:
         raise HTTPException(
             status_code=503,
-            detail="GROQ_API_KEY is required to generate company signals from news",
+            detail="A Groq API key is required to generate company signals from news",
         )
 
     settings = getattr(request.app.state, "settings", {})

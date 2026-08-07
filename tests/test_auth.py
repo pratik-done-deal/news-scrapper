@@ -20,6 +20,7 @@ from src.api.auth import (
     get_user_session,
     require_session,
 )
+from src.config import AppConfig, AuthSettings, reset_config, set_config
 
 VALID_BODY = {
     "status": "200",
@@ -306,8 +307,11 @@ def build_app(auth_client=None):
 
 
 @pytest.fixture(autouse=True)
-def auth_on(monkeypatch):
-    monkeypatch.setenv("AUTH_ENABLED", "true")
+def auth_on():
+    """Auth on by default, and the installed config reset after every test."""
+    set_config(AppConfig(auth=AuthSettings(enabled=True)))
+    yield
+    reset_config()
 
 
 def test_a_request_with_no_token_is_401_without_calling_the_auth_service():
@@ -443,9 +447,9 @@ def test_the_real_app_validates_sessions_on_every_route():
     assert not unguarded, f"served without session validation: {unguarded}"
 
 
-def test_auth_disabled_lets_everything_through(monkeypatch):
+def test_auth_disabled_lets_everything_through():
     """The local-development escape hatch, and the reason it is loud."""
-    monkeypatch.setenv("AUTH_ENABLED", "false")
+    set_config(AppConfig(auth=AuthSettings(enabled=False)))
     client, http = build_auth_client()
 
     response = TestClient(build_app(client)).get("/api/v1/news-scrapper/articles")
