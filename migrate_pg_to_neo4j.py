@@ -5,30 +5,23 @@ One-time migration: PostgreSQL → Neo4j
 Reads every row from Postgres and writes it to Neo4j using UNWIND batch queries.
 The script is fully idempotent — safe to re-run if interrupted.
 
-Required env vars (can be in .env):
-  PG_DATABASE_URL   postgresql connection string
-                    e.g. postgresql://newsuser:password@localhost:5432/news_db
-  NEO4J_URI         bolt URI   (default: neo4j://127.0.0.1:7687)
-  NEO4J_USER        username   (default: neo4j)
-  NEO4J_PASSWORD    password
-  NEO4J_DATABASE    database   (default: newsscrapedatabase)
+Connection settings come from `src/config.py` under `neo4j`, overridden by
+--neo4j-* flags; the Postgres source is --pg-url and has no default.
 
 Usage:
-  python migrate_pg_to_neo4j.py
-  python migrate_pg_to_neo4j.py --dry-run          # count rows only, no writes
-  python migrate_pg_to_neo4j.py --batch-size 200
+  python migrate_pg_to_neo4j.py --pg-url postgresql://user:pass@host:5432/news_db \
+      --neo4j-password <password>
+  python migrate_pg_to_neo4j.py --pg-url ... --dry-run    # count rows only, no writes
+  python migrate_pg_to_neo4j.py --pg-url ... --batch-size 200
 """
 
 import argparse
 import logging
-import os
 import sys
 import uuid
 from datetime import datetime
 
-from dotenv import load_dotenv
-
-load_dotenv()
+from src.config import ConfigError, add_config_arguments, load_config
 
 logging.basicConfig(
     level=logging.INFO,
@@ -213,7 +206,7 @@ def _write_company_rel_batch(neo4j_session, rel_type: str, batch: list[dict]) ->
 # Entry point
 # ---------------------------------------------------------------------------
 
-def migrate(pg_url: str, batch_size: int, dry_run: bool) -> None:
+def migrate(pg_url: str, batch_size: int, dry_run: bool, config) -> None:
     try:
         import psycopg2
         import psycopg2.extras
@@ -224,10 +217,10 @@ def migrate(pg_url: str, batch_size: int, dry_run: bool) -> None:
     from neo4j import GraphDatabase
     from src.db.models import SCHEMA_CONSTRAINTS, SCHEMA_INDEXES
 
-    neo4j_uri      = os.environ.get("NEO4J_URI", "neo4j://127.0.0.1:7687")
-    neo4j_user     = os.environ.get("NEO4J_USER", "neo4j")
-    neo4j_password = os.environ["NEO4J_PASSWORD"]
-    neo4j_database = os.environ.get("NEO4J_DATABASE", "newsscrapedatabase")
+    neo4j_uri      = config.neo4j.uri
+    neo4j_user     = config.neo4j.user
+    neo4j_password = config.require_neo4j_password()
+    neo4j_database = config.neo4j.database
 
     logger.info(f"Connecting to PostgreSQL …")
     pg_conn = psycopg2.connect(pg_url)
@@ -290,17 +283,23 @@ def main() -> None:
         metavar="N",
         help="Rows per UNWIND batch (default: 100)",
     )
+    parser.add_argument(
+        "--pg-url",
+        required=True,
+        metavar="URL",
+        help="Source PostgreSQL URL, e.g. postgresql://user:pass@host:5432/dbname",
+    )
+    add_config_arguments(parser, only=("neo4j",))
     args = parser.parse_args()
 
-    pg_url = os.environ.get("PG_DATABASE_URL")
-    if not pg_url:
-        logger.error(
-            "PG_DATABASE_URL is not set.\n"
-            "Add it to .env: PG_DATABASE_URL=postgresql://user:pass@host:5432/dbname"
-        )
+    try:
+        config = load_config(args)
+        config.require_neo4j_password()
+    except ConfigError as exc:
+        logger.error(str(exc))
         sys.exit(1)
 
-    migrate(pg_url=pg_url, batch_size=args.batch_size, dry_run=args.dry_run)
+    migrate(pg_url=args.pg_url, batch_size=args.batch_size, dry_run=args.dry_run, config=config)
 
 
 if __name__ == "__main__":

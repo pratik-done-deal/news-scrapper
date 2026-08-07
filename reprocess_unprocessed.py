@@ -6,33 +6,27 @@ These are articles where the LLM call failed (e.g. token limit) during
 the original pipeline run, leaving no deal node in the database.
 
 Usage:
-    python reprocess_unprocessed.py [--dry-run] [--limit N]
+    python reprocess_unprocessed.py [--dry-run] [--limit N] --neo4j-password ... --groq-api-key ...
 
 Options:
     --dry-run   Print articles that would be processed without calling the LLM.
     --limit N   Process at most N articles (default: all).
+    Plus the configuration overrides listed by --help.
 """
 
 import argparse
 import logging
-import os
 import sys
 
-import yaml
-from dotenv import load_dotenv
 from groq import Groq
 from neo4j import GraphDatabase
 
+from src.config import ConfigError, add_config_arguments, load_config
 from src.db.repository import NewsRepository
+from src.logging_config import setup_logging
+from src.paths import load_settings
 from src.processor.extractor import DealExtractor
 
-load_dotenv()
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
 logger = logging.getLogger(__name__)
 
 
@@ -65,18 +59,23 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="List articles without processing")
     parser.add_argument("--limit", type=int, default=None, help="Max articles to process")
+    add_config_arguments(parser, only=("neo4j", "groq", "logging"))
     args = parser.parse_args()
 
-    neo4j_uri      = os.environ.get("NEO4J_URI", "neo4j://127.0.0.1:7687")
-    neo4j_user     = os.environ.get("NEO4J_USER", "neo4j")
-    neo4j_password = os.environ.get("NEO4J_PASSWORD")
-    neo4j_database = os.environ.get("NEO4J_DATABASE", "newsscrapedatabase")
-    groq_api_key   = os.environ.get("GROQ_API_KEY")
+    config = load_config(args)
+    setup_logging()
 
-    if not neo4j_password or not groq_api_key:
-        sys.exit("NEO4J_PASSWORD and GROQ_API_KEY must be set in environment.")
+    try:
+        neo4j_password = config.require_neo4j_password()
+        groq_api_key = config.require_groq_api_key()
+    except ConfigError as exc:
+        sys.exit(f"Error: {exc}")
 
-    settings = yaml.safe_load(open("config/settings.yaml"))
+    neo4j_uri      = config.neo4j.uri
+    neo4j_user     = config.neo4j.user
+    neo4j_database = config.neo4j.database
+
+    settings = load_settings()
     model = settings["groq"]["model"]
 
     driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
@@ -128,6 +127,7 @@ def main() -> None:
                 article_id=article_id,
                 buyer=deal.buyer,
                 seller=deal.seller,
+                target_company=deal.target_company,
                 deal_value=deal.deal_value,
                 sector=deal.sector,
                 sub_sector=deal.sub_sector,

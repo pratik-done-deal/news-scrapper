@@ -2,6 +2,7 @@
 import pytest
 from conftest import FakeConnection, FakeCursor, make_dao
 
+from src.config import AppConfig, MySQLSettings
 from src.db.mysql_dao import (
     MySQLConfig,
     MySQLDAO,
@@ -245,25 +246,20 @@ def test_connect_kwargs_use_config_values():
 # Config
 # --------------------------------------------------------------------------
 
-def test_is_configured_requires_host_and_database(monkeypatch):
-    monkeypatch.delenv("MYSQL_HOST", raising=False)
-    monkeypatch.delenv("MYSQL_DATABASE", raising=False)
-    assert MySQLConfig.is_configured() is False
-    monkeypatch.setenv("MYSQL_HOST", "db.internal")
-    assert MySQLConfig.is_configured() is False
-    monkeypatch.setenv("MYSQL_DATABASE", "company_db")
-    assert MySQLConfig.is_configured() is True
+def _config(**mysql) -> AppConfig:
+    return AppConfig(mysql=MySQLSettings(**mysql))
 
 
-def test_from_env_merges_settings_defaults(monkeypatch):
-    monkeypatch.setenv("MYSQL_HOST", "db.internal")
-    monkeypatch.setenv("MYSQL_DATABASE", "company_db")
-    monkeypatch.setenv("MYSQL_USER", "reader")
-    monkeypatch.setenv("MYSQL_PASSWORD", "secret")
-    monkeypatch.delenv("MYSQL_PORT", raising=False)
+def test_is_configured_requires_host_and_database():
+    assert MySQLConfig.is_configured(_config()) is False
+    assert MySQLConfig.is_configured(_config(host="db.internal")) is False
+    assert MySQLConfig.is_configured(_config(host="db.internal", database="company_db")) is True
 
-    config = MySQLConfig.from_env(
-        {"company_mysql": {"port": 3307, "pool_size": 9, "read_timeout": 15}}
+
+def test_from_config_merges_settings_defaults():
+    config = MySQLConfig.from_config(
+        {"company_mysql": {"port": 3307, "pool_size": 9, "read_timeout": 15}},
+        _config(host="db.internal", database="company_db", user="reader", password="secret"),
     )
     assert (config.host, config.database, config.user) == ("db.internal", "company_db", "reader")
     assert config.port == 3307
@@ -271,29 +267,24 @@ def test_from_env_merges_settings_defaults(monkeypatch):
     assert config.read_timeout == 15
 
 
-def test_from_env_env_port_wins_over_settings(monkeypatch):
-    monkeypatch.setenv("MYSQL_HOST", "db.internal")
-    monkeypatch.setenv("MYSQL_DATABASE", "company_db")
-    monkeypatch.setenv("MYSQL_USER", "reader")
-    monkeypatch.setenv("MYSQL_PASSWORD", "secret")
-    monkeypatch.setenv("MYSQL_PORT", "3310")
-    assert MySQLConfig.from_env({"company_mysql": {"port": 3307}}).port == 3310
+def test_from_config_port_override_wins_over_settings():
+    config = MySQLConfig.from_config(
+        {"company_mysql": {"port": 3307}},
+        _config(
+            host="db.internal", database="company_db", user="reader",
+            password="secret", port=3310,
+        ),
+    )
+    assert config.port == 3310
 
 
-def test_from_env_accepts_an_empty_password(monkeypatch):
+def test_from_config_accepts_an_empty_password():
     # Local dev servers commonly run with a blank root password.
-    monkeypatch.setenv("MYSQL_HOST", "127.0.0.1")
-    monkeypatch.setenv("MYSQL_DATABASE", "company_db_test")
-    monkeypatch.setenv("MYSQL_USER", "root")
-    monkeypatch.setenv("MYSQL_PASSWORD", "")
-    assert MySQLConfig.from_env().password == ""
+    config = _config(host="127.0.0.1", database="company_db_test", user="root", password="")
+    assert MySQLConfig.from_config(config=config).password == ""
 
 
-def test_from_env_reports_missing_settings(monkeypatch):
-    monkeypatch.setenv("MYSQL_HOST", "db.internal")
-    monkeypatch.delenv("MYSQL_DATABASE", raising=False)
-    monkeypatch.delenv("MYSQL_USER", raising=False)
-    monkeypatch.delenv("MYSQL_PASSWORD", raising=False)
+def test_from_config_reports_missing_settings():
     with pytest.raises(MySQLNotConfigured) as exc:
-        MySQLConfig.from_env()
-    assert "MYSQL_DATABASE" in str(exc.value)
+        MySQLConfig.from_config(config=_config(host="db.internal"))
+    assert "--mysql-database" in str(exc.value)

@@ -80,7 +80,6 @@ INSERT INTO company (name, brand_name, website, status) VALUES
     ('Bundl Technologies Private Limited',        'Swiggy',          'swiggy.com',              'active'),
     ('ANI Technologies Private Limited',          'Ola',             'olacabs.com',             'active'),
     ('Kiranakart Technologies Private Limited',   'Zepto',           'zeptonow.com',            'active'),
-    ('Fashnear Technologies Private Limited',     'Meesho',          'meesho.com',              'active'),
     ('One97 Communications Limited',              'Paytm',           'paytm.com',               'active'),
     ('FSN E-Commerce Ventures Limited',           'Nykaa',           'nykaa.com',               'active'),
     ('Lenskart Solutions Private Limited',        'Lenskart',        'lenskart.com',            'active'),
@@ -93,7 +92,6 @@ INSERT INTO company (name, brand_name, website, status) VALUES
     ('Zerodha Broking Limited',                   'Zerodha',         'zerodha.com',             'active'),
     ('PB Fintech Limited',                        'Policybazaar',    'policybazaar.com',        'active'),
     ('Pine Labs Private Limited',                 'Pine Labs',       'pinelabs.com',            'active'),
-    ('Delhivery Limited',                         'Delhivery',       'delhivery.com',           'active'),
     ('Zetwerk Manufacturing Businesses Private Limited', 'Zetwerk',  'zetwerk.com',             'active'),
     ('Roppen Transportation Services Private Limited',   'Rapido',   'rapido.bike',             'active'),
     ('Urbanclap Technologies India Private Limited',     'Urban Company', 'urbancompany.com',   'active'),
@@ -112,6 +110,33 @@ INSERT INTO company (name, brand_name, website, status) VALUES
     ('Blue Tokai Coffee Roasters Private Limited','Blue Tokai',      'bluetokaicoffee.com',     NULL),
     ('Sunshine Teahouse Private Limited',         'Chaayos',         'chaayos.com',             'active'),
     ('Radhamani Textiles Private Limited',        'Rare Rabbit',     'rarerabbit.in',           'active');
+
+-- ---------------------------------------------------------------------------
+-- Sellers with explicit ids, mirroring real Done Deal seller references so the
+-- entity news flow can be exercised end to end: the UI's "S5123" card resolves
+-- through `GET /api/v1/entities/S5123/news` to this row, and from its name to
+-- the deals in Neo4j. Ids are set explicitly (not AUTO_INCREMENT) because the
+-- reference is the fixture — S5123 must be Delhivery on every reseed.
+--
+-- These are the companies scraped in the news run, so each one has coverage in
+-- the graph to resolve against. A NULL brand_name is deliberate on several:
+-- it exercises the legal-suffix fallback, which is what turns the registered
+-- "Oracle Corporation" into the "Oracle" the press actually writes.
+-- ---------------------------------------------------------------------------
+-- 5122-5125 are the real Done Deal seller ids. The rest are placeholders for
+-- companies from the same scrape run whose ids are not yet known — correct
+-- them here and reseed if they differ.
+INSERT INTO company (id, name, brand_name, website, status) VALUES
+    (5122, 'Zoho Corporation Private Limited',     'Zoho',        'zoho.com',        'active'),
+    (5123, 'Delhivery Limited',                    'Delhivery',   'delhivery.com',   'active'),
+    (5124, 'Fashnear Technologies Private Limited','Meesho',      'meesho.com',      'active'),
+    (5125, 'API Holdings Limited',                 'PharmEasy',   'pharmeasy.in',    'active'),
+    (5126, 'Curaa Home Private Limited',           'Curaa Home',  NULL,              'active'),
+    (5127, 'Parviom Technologies Private Limited', NULL,          NULL,              'active'),
+    (5128, 'Onesta Foods Private Limited',         'Onesta',      NULL,              'active'),
+    (5129, 'Plugstack Technologies Private Limited','Plugstack',  NULL,              'active'),
+    (6270, 'Rapidbox Commerce Private Limited',    'Rapidbox',    NULL,              'active'),
+    (5131, 'Oracle Corporation',                   NULL,          'oracle.com',      'active');
 
 -- Sellers the active filter must exclude.
 INSERT INTO company (name, brand_name, website, status) VALUES

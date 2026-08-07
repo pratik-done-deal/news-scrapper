@@ -14,6 +14,7 @@ from src.api.dependencies import get_mysql_dao
 from src.api.job_manager import JobManager
 from src.api.routes import company_scrape
 from src.api.schemas import WatchlistScrapeRequest
+from src.config import AppConfig
 
 SOURCES = [
     {"name": "Entrackr News", "search_url": "https://entrackr.com/search?title={query}"},
@@ -60,8 +61,9 @@ class RecordingExecutor:
 
 def make_client(rows=ROWS, settings=SETTINGS, with_dao=True):
     app = FastAPI()
-    app.include_router(company_scrape.router, prefix="/api/v1")
+    app.include_router(company_scrape.router, prefix="/api/v1/news-scrapper")
     app.state.settings = settings
+    app.state.config = AppConfig()
     app.state.sources_config = {"sources": SOURCES}
     app.state.job_manager = JobManager()
     app.state.executor = RecordingExecutor()
@@ -81,7 +83,7 @@ def make_client(rows=ROWS, settings=SETTINGS, with_dao=True):
 
 def test_preview_returns_derived_search_terms():
     client, _ = make_client()
-    response = client.get("/api/v1/companies/watchlist")
+    response = client.get("/api/v1/news-scrapper/companies/watchlist")
     assert response.status_code == 200
 
     body = response.json()
@@ -93,43 +95,43 @@ def test_preview_returns_derived_search_terms():
 
 def test_preview_defaults_to_the_configured_since_window():
     client, _ = make_client()
-    body = client.get("/api/v1/companies/watchlist").json()
+    body = client.get("/api/v1/news-scrapper/companies/watchlist").json()
     assert body["since"] is not None
 
 
 def test_preview_without_a_since_window_when_configured_to_zero():
     client, _ = make_client(settings={"watchlist": {"default_since_hours": 0}})
-    assert client.get("/api/v1/companies/watchlist").json()["since"] is None
+    assert client.get("/api/v1/news-scrapper/companies/watchlist").json()["since"] is None
 
 
 def test_preview_honours_an_explicit_since():
     client, _ = make_client()
-    body = client.get("/api/v1/companies/watchlist?since=2026-08-01").json()
+    body = client.get("/api/v1/news-scrapper/companies/watchlist?since=2026-08-01").json()
     assert body["since"].startswith("2026-08-01")
 
 
 def test_preview_rejects_a_malformed_since():
     client, _ = make_client()
-    assert client.get("/api/v1/companies/watchlist?since=01-08-2026").status_code == 400
+    assert client.get("/api/v1/news-scrapper/companies/watchlist?since=01-08-2026").status_code == 400
 
 
 def test_preview_rejects_an_unknown_entity_type():
     client, _ = make_client()
-    response = client.get("/api/v1/companies/watchlist?entity_type=vendor")
+    response = client.get("/api/v1/news-scrapper/companies/watchlist?entity_type=vendor")
     assert response.status_code == 400
     assert "vendor" in response.json()["detail"]
 
 
 def test_preview_limit_caps_the_entries_but_not_the_totals():
     client, _ = make_client()
-    body = client.get("/api/v1/companies/watchlist?limit=1").json()
+    body = client.get("/api/v1/news-scrapper/companies/watchlist?limit=1").json()
     assert len(body["entries"]) == 1
     assert body["total_terms"] == 2
 
 
 def test_preview_returns_503_without_mysql():
     client, _ = make_client(with_dao=False)
-    response = client.get("/api/v1/companies/watchlist")
+    response = client.get("/api/v1/news-scrapper/companies/watchlist")
     assert response.status_code == 503
     assert "not configured" in response.json()["detail"]
 
@@ -140,7 +142,7 @@ def test_preview_returns_503_without_mysql():
 
 def test_trigger_accepts_and_returns_a_running_job():
     client, app = make_client()
-    response = client.post("/api/v1/companies/scrape/watchlist", json={})
+    response = client.post("/api/v1/news-scrapper/companies/scrape/watchlist", json={})
     assert response.status_code == 202
 
     body = response.json()
@@ -152,7 +154,7 @@ def test_trigger_accepts_and_returns_a_running_job():
 def test_trigger_rejects_unknown_sources():
     client, _ = make_client()
     response = client.post(
-        "/api/v1/companies/scrape/watchlist", json={"sources": ["Nonexistent Source"]}
+        "/api/v1/news-scrapper/companies/scrape/watchlist", json={"sources": ["Nonexistent Source"]}
     )
     assert response.status_code == 400
     assert "No matching sources" in response.json()["detail"]
@@ -161,7 +163,7 @@ def test_trigger_rejects_unknown_sources():
 def test_trigger_rejects_a_bad_date_pair():
     client, _ = make_client()
     response = client.post(
-        "/api/v1/companies/scrape/watchlist", json={"start_date": "2026-01-01"}
+        "/api/v1/news-scrapper/companies/scrape/watchlist", json={"start_date": "2026-01-01"}
     )
     assert response.status_code == 422
 
@@ -169,7 +171,7 @@ def test_trigger_rejects_a_bad_date_pair():
 def test_trigger_rejects_an_unknown_entity_type():
     client, _ = make_client()
     response = client.post(
-        "/api/v1/companies/scrape/watchlist", json={"entity_types": ["vendor"]}
+        "/api/v1/news-scrapper/companies/scrape/watchlist", json={"entity_types": ["vendor"]}
     )
     assert response.status_code == 422
 
@@ -179,19 +181,19 @@ def test_trigger_errors_when_nothing_matches_and_gating_is_off():
         rows=[],
         settings={"watchlist": {"default_since_hours": 24, "gate_listing_sources": False}},
     )
-    response = client.post("/api/v1/companies/scrape/watchlist", json={})
+    response = client.post("/api/v1/news-scrapper/companies/scrape/watchlist", json={})
     assert response.status_code == 400
     assert "No companies matched" in response.json()["detail"]
 
 
 def test_trigger_still_runs_with_no_new_entities_when_gating_is_on():
     client, _ = make_client(rows=[])
-    assert client.post("/api/v1/companies/scrape/watchlist", json={}).status_code == 202
+    assert client.post("/api/v1/news-scrapper/companies/scrape/watchlist", json={}).status_code == 202
 
 
 def test_trigger_returns_503_without_mysql():
     client, _ = make_client(with_dao=False)
-    assert client.post("/api/v1/companies/scrape/watchlist", json={}).status_code == 503
+    assert client.post("/api/v1/news-scrapper/companies/scrape/watchlist", json={}).status_code == 503
 
 
 # --------------------------------------------------------------------------

@@ -13,23 +13,29 @@ def _company_id(name: str) -> str:
 
 from neo4j import GraphDatabase
 
-from .models import SCHEMA_CONSTRAINTS, SCHEMA_INDEXES
+from .models import COMPANY_DEAL_RELS, ROLE_TO_REL, SCHEMA_CONSTRAINTS, SCHEMA_INDEXES
 
 logger = logging.getLogger(__name__)
 
-# Maps company role → Cypher relationship type
-_ROLE_TO_REL = {
-    "buyer": "BOUGHT",
-    "seller": "SOLD",
-    "investor": "INVESTED_IN",
-    "company": "INVOLVED_IN",
+
+# The LLM sometimes writes a placeholder instead of leaving a party null —
+# "Not specified" for the buyers in an unattributed block deal, say. Stored
+# verbatim these become Company nodes that accumulate relationships across
+# unrelated deals, so they are dropped at the boundary.
+_PLACEHOLDER_NAMES = {
+    "n/a", "na", "none", "null", "not specified", "unspecified",
+    "not disclosed", "undisclosed", "not applicable", "unknown",
+    "not available", "not mentioned", "various", "others",
 }
 
 
 def _split_names(raw: Optional[str]) -> list[str]:
     if not raw:
         return []
-    return [n.strip() for n in raw.split(",") if n.strip()]
+    return [
+        n.strip() for n in raw.split(",")
+        if n.strip() and n.strip().lower().strip(".") not in _PLACEHOLDER_NAMES
+    ]
 
 
 def _roles_for_deal_type(deal_type: Optional[str]) -> tuple[str, str]:
@@ -67,6 +73,82 @@ class NewsRepository:
 
     def close(self) -> None:
         self._driver.close()
+
+    def register_company(
+        self,
+        external_id: str,
+        name: str,
+        brand_name: Optional[str] = None,
+    ) -> dict:
+        """Attach a Done Deal reference (e.g. "S5122") to a Company node.
+
+        Keyed on the *brand* where one exists, falling back to the registered
+        name with its legal suffixes stripped. This is the same rule the
+        watchlist searches under, and it has to be: the node must be the one the
+        extractor MERGEs when it reads that company out of an article. Press
+        coverage writes "Meesho", never "Fashnear Technologies Private Limited",
+        so keying on the registered name would mint an orphan node and the feed
+        would return nothing while the real deals sat on "Meesho".
+
+        Idempotent, and safe when Done Deal renames a company: the reference is
+        first removed from whatever node currently holds it, since
+        `company_external_id` is unique and the write would otherwise fail.
+
+        Returns the node's properties plus `created` and `deal_count`. A node
+        created fresh with no deals is the signature of a name that did not
+        match anything the extractor has seen — worth surfacing to the caller
+        rather than reporting success.
+        """
+        canonical = _normalize_company_name(brand_name or name)
+        if not canonical:
+            raise ValueError("company name is empty after normalisation")
+
+        with self._session() as session:
+            # Release the ref from any other node before claiming it.
+            session.run(
+                """
+                MATCH (old:Company {external_id: $external_id})
+                WHERE old.name <> $name
+                REMOVE old.external_id, old.external_name
+                """,
+                external_id=external_id,
+                name=canonical,
+            )
+            record = session.run(
+                """
+                MERGE (c:Company {name: $name})
+                ON CREATE SET c.id = $company_id, c._created = true
+                SET c.external_id   = $external_id,
+                    c.external_name = $external_name,
+                    c.linked_at     = $linked_at
+                WITH c, coalesce(c._created, false) AS created
+                REMOVE c._created
+                WITH c, created
+                OPTIONAL MATCH (c)-[r]->(:Deal)
+                RETURN c.id AS id, c.name AS name, c.external_id AS external_id,
+                       c.external_name AS external_name, c.linked_at AS linked_at,
+                       created, count(r) AS deal_count
+                """,
+                name=canonical,
+                company_id=_company_id(canonical),
+                external_id=external_id,
+                external_name=name,
+                linked_at=datetime.now(timezone.utc).isoformat(),
+            ).single()
+
+        if record["created"] and not record["deal_count"]:
+            logger.warning(
+                f"Registered company {external_id} → '{canonical}': created a new node with"
+                f" no deals. If {name!r} is known to the press under another name, resend"
+                " with that name as brand_name or the news feed will stay empty."
+            )
+        else:
+            logger.info(
+                f"Registered company {external_id} → '{canonical}'"
+                f" ({'new node' if record['created'] else 'existing node'},"
+                f" {record['deal_count']} deal link(s))"
+            )
+        return dict(record)
 
     def _hash_url(self, url: str) -> str:
         return hashlib.sha256(url.encode()).hexdigest()
@@ -172,6 +254,14 @@ class NewsRepository:
                     content:      row.content,
                     scraped_at:   row.scraped_at,
                     published_at: row.published_at,
+                    // The company whose on-site search returned this article,
+                    // null for a plain listing/RSS walk. This is provenance the
+                    // extractor cannot recover: an article found by searching
+                    // "Meesho" is about Meesho even when the LLM names only the
+                    // acquirer and the target, so it is what lets a registered
+                    // company reach its own news without depending on the
+                    // parties matching its name.
+                    searched_company: row.searched_company,
                     is_ma_funding_relevant: null,
                     is_processed: false
                 })
@@ -226,12 +316,12 @@ class NewsRepository:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         with self._session() as session:
             result = session.run(
-                """
+                f"""
                 MATCH (a:Article)-[:HAS_DEAL]->(d:Deal)
                 WHERE a.is_processed = true
                   AND a.duplicate_of IS NULL
                   AND a.scraped_at >= $cutoff
-                OPTIONAL MATCH (co:Company)-[:BOUGHT|SOLD|INVESTED_IN|INVOLVED_IN]->(d)
+                OPTIONAL MATCH (co:Company)-[:{COMPANY_DEAL_RELS}]->(d)
                 RETURN a.id AS id, a.title AS title, a.content AS content,
                        d.id AS deal_id, d.deal_value AS deal_value,
                        [name IN collect(DISTINCT co.name) WHERE name IS NOT NULL] AS parties
@@ -273,6 +363,7 @@ class NewsRepository:
         country: Optional[str],
         deal_type: Optional[str],
         summary: Optional[str],
+        target_company: Optional[str] = None,
     ) -> str:
         new_deal_id = str(uuid.uuid4())
         extracted_at = datetime.now(timezone.utc).isoformat()
@@ -313,39 +404,36 @@ class NewsRepository:
             ).single()
             deal_id = record["deal_id"]
 
-            # Create Company nodes and relationships for buyers
-            buyer_rel = _ROLE_TO_REL[buyer_role]
-            for name in _split_names(buyer):
-                canonical = _normalize_company_name(name)
-                session.run(
-                    f"""
-                    MERGE (c:Company {{name: $name}})
-                    ON CREATE SET c.id = $company_id
-                    WITH c
-                    MATCH (d:Deal {{id: $deal_id}})
-                    MERGE (c)-[:{buyer_rel}]->(d)
-                    """,
-                    name=canonical,
-                    company_id=_company_id(canonical),
-                    deal_id=deal_id,
-                )
-
-            # Create Company nodes and relationships for sellers
-            seller_rel = _ROLE_TO_REL[seller_role]
-            for name in _split_names(seller):
-                canonical = _normalize_company_name(name)
-                session.run(
-                    f"""
-                    MERGE (c:Company {{name: $name}})
-                    ON CREATE SET c.id = $company_id
-                    WITH c
-                    MATCH (d:Deal {{id: $deal_id}})
-                    MERGE (c)-[:{seller_rel}]->(d)
-                    """,
-                    name=canonical,
-                    company_id=_company_id(canonical),
-                    deal_id=deal_id,
-                )
+            # Create Company nodes and relationships, one role at a time. The
+            # target is linked last and only when it is not already a party, so
+            # a company named as both buyer/seller and subject keeps the more
+            # specific role instead of gaining a redundant ABOUT edge.
+            parties = {
+                _normalize_company_name(n)
+                for n in _split_names(buyer) + _split_names(seller)
+            }
+            for role, raw in (
+                (buyer_role, buyer),
+                (seller_role, seller),
+                ("target", target_company),
+            ):
+                rel = ROLE_TO_REL[role]
+                for name in _split_names(raw):
+                    canonical = _normalize_company_name(name)
+                    if role == "target" and canonical in parties:
+                        continue
+                    session.run(
+                        f"""
+                        MERGE (c:Company {{name: $name}})
+                        ON CREATE SET c.id = $company_id
+                        WITH c
+                        MATCH (d:Deal {{id: $deal_id}})
+                        MERGE (c)-[:{rel}]->(d)
+                        """,
+                        name=canonical,
+                        company_id=_company_id(canonical),
+                        deal_id=deal_id,
+                    )
 
         logger.debug(f"Deal saved for article {article_id}")
         return deal_id

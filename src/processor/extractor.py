@@ -36,6 +36,9 @@ Extract the following fields and return ONLY valid JSON:
   Always use the company's clean trading name — omit legal suffixes like "Pvt. Ltd.", "Private Limited", "Ltd.", "Inc.", "Corp.", "LLP", etc. (e.g. write "Tata Sons" not "Tata Sons Pvt. Ltd.").
 - seller: For acquisitions/mergers — the company being acquired. For funding rounds — the company receiving the investment. Null if not applicable.
   Same rule: omit legal suffixes from the company name.
+- target_company: The company the deal is *about* — whose shares, stake or assets change hands — when that company is neither the buyer nor the seller. Null if the subject is already named as buyer or seller.
+  This matters most for stake sales, block/bulk deals and secondary transactions: when investor X sells shares *of* listed company Y, the buyer is the purchaser, the seller is X, and target_company is "Y".
+  Same rule: omit legal suffixes from the company name.
 - deal_value: Monetary value as stated in the article, e.g. "$2.5 billion" (null if not mentioned)
 - sector: Must be exactly one of: {sectors}
 - sub_sector: Only required when sector is "D2C", "Fintech", or "Others".
@@ -62,6 +65,7 @@ Output:
 {{
   "buyer": "Tata Sons",
   "seller": "Government of India (Air India)",
+  "target_company": "Air India",
   "deal_value": "₹18,000 crore",
   "sector": "Others",
   "sub_sector": "Automobile",
@@ -78,6 +82,7 @@ Output:
 {{
   "buyer": "Reliance Industries",
   "seller": "Mandhana Retail Ventures",
+  "target_company": null,
   "deal_value": "₹900 crore",
   "sector": "D2C",
   "sub_sector": "Apparel",
@@ -94,6 +99,7 @@ Output:
 {{
   "buyer": "Tiger Global Management, Insight Partners, Blume Ventures",
   "seller": "Slice",
+  "target_company": null,
   "deal_value": "$220 million",
   "sector": "Fintech",
   "sub_sector": "Lending/Wealthtech",
@@ -110,6 +116,7 @@ Output:
 {{
   "buyer": "Bain Capital",
   "seller": null,
+  "target_company": null,
   "deal_value": "$10.5 billion",
   "sector": "Others",
   "sub_sector": null,
@@ -118,7 +125,24 @@ Output:
   "summary": "Bain Capital has closed its Asia Fund VI at $10.5 billion, exceeding its original $7 billion target. The fund will invest across Technology, Industrials, Consumer, Healthcare, and Business and Financial Services in Asia. No specific investee company has been named yet."
 }}
 
-### Example 5 — Non-Deal News (return all nulls)
+### Example 5 — Stake Sale / Block Deal (the listed company is neither buyer nor seller)
+Title: Nexus Venture Partners offloads Rs 530 Cr stake in Delhivery via block deals
+Content: Nexus Venture Partners sold 1.1 crore shares of logistics firm Delhivery for approximately Rs 530 crore through block deals on the NSE. Morgan Stanley and Goldman Sachs were among the buyers. Nexus, an early backer of the company, has been steadily paring its holding since Delhivery's listing.
+
+Output:
+{{
+  "buyer": "Morgan Stanley, Goldman Sachs",
+  "seller": "Nexus Venture Partners",
+  "target_company": "Delhivery",
+  "deal_value": "Rs 530 crore",
+  "sector": "Others",
+  "sub_sector": "Logistics",
+  "country": "India",
+  "deal_type": "divestiture",
+  "summary": "Nexus Venture Partners sold 1.1 crore shares of Delhivery for around Rs 530 crore via block deals on the NSE, with Morgan Stanley and Goldman Sachs among the buyers. The completed sale continues the early backer's steady exit from the listed logistics company."
+}}
+
+### Example 6 — Non-Deal News (return all nulls)
 Title: Infosys reports 8% growth in Q3 revenue, beats analyst estimates
 Content: Infosys reported an 8% year-on-year increase in revenue for the third quarter, beating consensus analyst estimates. The company's CEO attributed the growth to strong deal wins in the North American market. Infosys also raised its full-year revenue guidance to 8–10%.
 
@@ -126,6 +150,7 @@ Output:
 {{
   "buyer": null,
   "seller": null,
+  "target_company": null,
   "deal_value": null,
   "sector": null,
   "sub_sector": null,
@@ -146,6 +171,10 @@ Content: {content}
 class DealData(BaseModel):
     buyer: Optional[str] = None
     seller: Optional[str] = None
+    # The company the deal is about when it is neither buyer nor seller — a stake
+    # sale names the investor and the purchaser, so without this the listed
+    # company whose shares moved would never reach the graph.
+    target_company: Optional[str] = None
     deal_value: Optional[str] = None
     sector: Optional[str] = None
     sub_sector: Optional[str] = None

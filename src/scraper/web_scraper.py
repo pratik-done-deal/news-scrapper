@@ -194,6 +194,10 @@ class WebScraper(ABC):
     def __init__(self, request_timeout: int = 30, delay: float = 2.0):
         self.timeout = request_timeout
         self.delay = delay
+        # The source entry this scraper was built for; set by the scrape worker so
+        # per-source options (e.g. the RSS tuning keys) are reachable without
+        # threading them through every method signature.
+        self.source_config: dict = {}
         self.session = requests.Session()
         self.session.headers.update(HEADERS)
 

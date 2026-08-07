@@ -1,6 +1,16 @@
+# `rss_url` makes a source read its publisher's feed on routine (no date range,
+# no company) runs: one request instead of a listing walk plus a fetch per
+# article, with publisher-supplied dates. Feeds hold only 1-7 days and cannot be
+# searched, so date-range backfill and company scrapes still use the scraper below.
+# Optional per-source keys: `rss_link_contains` (path filter, off by default —
+# feed paths often differ from the section listing's) and `rss_max_age_hours`
+# (staleness warning threshold, default 48).
+
 sources:
   - name: Economic Times Corporate
     url: https://economictimes.indiatimes.com/news/company/corporate-trends
+    # No RSS: ET's feeds are section-scoped and none maps to corporate-trends —
+    # the id that looks like it does serves international news instead.
     domain: economictimes.indiatimes.com
     link_contains: /news/company/
     scraper: et
@@ -9,6 +19,7 @@ sources:
 
   - name: India Infoline M&A
     url: https://www.indiainfoline.com/news/mergers-acquisitions
+    # No RSS: no feed found at any of the usual paths.
     domain: indiainfoline.com
     link_contains: /news/
     scraper: iifl
@@ -19,6 +30,9 @@ sources:
     url: https://indianstartupnews.com/funding
     # Company-scrape search endpoint; {query} is filled with the URL-encoded company name.
     search_url: https://indianstartupnews.com/search?title={query}
+    # Feed carries the full article body and covers all of ISN's news, not just
+    # /funding/ — broader than the listing above, and NewsFilter sorts relevance out.
+    rss_url: https://indianstartupnews.com/rss
     domain: indianstartupnews.com
     link_contains: /funding/
     scraper: isn
@@ -30,6 +44,10 @@ sources:
     # Company-scrape search API. Unlike the other search_url entries this is not a
     # {query} template — Inc42's search is a POST endpoint taking a `query` field.
     search_url: https://search.thed2csummit.co/query
+    # Feed ships content:encoded, which yields ~3x more text than scraping the
+    # article page does (trafilatura recovers only ~740 chars through Inc42's wall).
+    # Only ~24 items ≈ 1.1 days of history, so it depends on the regular schedule.
+    rss_url: https://inc42.com/feed/
     domain: inc42.com
     link_contains: /
     scraper: inc42
@@ -38,6 +56,8 @@ sources:
   - name: Entrackr News
     url: https://entrackr.com/news
     search_url: https://entrackr.com/search?title={query}
+    # Feed body matches the fetched article almost exactly (~100% of its length).
+    rss_url: https://entrackr.com/rss
     domain: entrackr.com
     link_contains: /news/
     scraper: entrackr
@@ -59,6 +79,7 @@ sources:
 
   - name: Financial Express Market
     url: https://www.financialexpress.com/market/
+    # No RSS: /market/feed/ and /feed/ both return non-feed responses.
     domain: financialexpress.com
     link_contains: /market/
     scraper: fe
@@ -82,6 +103,9 @@ sources:
 
   - name: CNBC Deals and IPOs
     url: https://www.cnbc.com/deals-and-ipos/
+    # Deals-and-IPOs feed. Teaser-only (~100 chars), so articles are still
+    # fetched — the win here is the listing walk and the reliable pubDate.
+    rss_url: https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664
     domain: cnbc.com
     link_contains: /20
     scraper: cnbc

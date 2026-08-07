@@ -10,8 +10,8 @@ Last refreshed: 2026-08-04
 - Read-only rule: every statement passed to `fetch_all`/`fetch_one`/`fetch_value` must start with SELECT/SHOW/DESCRIBE/DESC/EXPLAIN/WITH. Writes, DDL, `CALL`, and stacked statements raise `ReadOnlyViolation`. `cursor()` bypasses the guard by design — use the fetch helpers unless cursor-level control is needed.
 - SQL rule: bind values with `%s`; identifiers cannot be bound, so table/column names go through `_quote_identifier()`.
 - Pooling: lazy LIFO pool capped at `pool_size`; checked-out connections are pinged with `reconnect=True`, and a connection whose statement raised is discarded rather than reused.
-- Config: credentials from `MYSQL_HOST/PORT/USER/PASSWORD/DATABASE`; tuning defaults from `config/settings.yaml` -> `company_mysql`. Env wins over YAML.
-- Optional by design: when `MYSQL_HOST`/`MYSQL_DATABASE` are unset the API starts normally with `app.state.mysql_dao = None`, and `get_mysql_dao` returns 503.
+- Config: credentials from `src/config.py` -> `mysql` (`--mysql-host/-port/-user/-password/-database`); tuning defaults from `config/settings.yaml` -> `company_mysql`. A passed flag wins over YAML; `MySQLConfig.from_config()` merges the two.
+- Optional by design: when `--mysql-host`/`--mysql-database` are unset the API starts normally with `app.state.mysql_dao = None`, and `get_mysql_dao` returns 503.
 - Introspection: `list_tables()`, `describe_table()`, `count_rows()`, `sample_rows()`; CLI wrapper is `scripts/inspect_company_db.py`.
 
 ## Business Entities (`src/db/mysql_queries.py`)

@@ -243,6 +243,31 @@ def search_entities_by_name(dao: MySQLDAO, name: str, limit: int = 25) -> list[d
     return fetch_entities(dao, name_like=name, limit=limit)
 
 
+def fetch_entity_by_id(
+    dao: MySQLDAO,
+    entity_type: str,
+    entity_id: int,
+) -> Optional[dict]:
+    """One entity by its `(entity_type, entity_id)` identity, or None.
+
+    The lookup path for the UI: a seller card knows it is S5123, and the news
+    feed needs the name to search Neo4j with. Reuses the same active-record
+    filters as `fetch_entities()`, so a de-listed seller resolves to None rather
+    than quietly serving news for a record the business no longer tracks.
+    """
+    union_sql, params = _union_query([entity_type], name_like=None)
+    sql = f"""
+        SELECT entity_type, entity_id, company_name, brand_name, website
+        FROM (
+        {union_sql}
+        ) AS entities
+        WHERE entity_id = %s
+        LIMIT 1
+    """
+    rows = dao.fetch_all(sql, [*params, int(entity_id)])
+    return rows[0] if rows else None
+
+
 def fetch_entity_names(
     dao: MySQLDAO,
     entity_types: Optional[Iterable[str]] = None,

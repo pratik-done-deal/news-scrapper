@@ -21,15 +21,10 @@ import argparse
 import sys
 from pathlib import Path
 
-import yaml
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass
+from src.config import add_config_arguments, load_config
+from src.paths import load_settings
 
 from src.db import mysql_queries as mq
 from src.db.mysql_dao import MySQLConfig, MySQLDAO, MySQLNotConfigured, ReadOnlyViolation
@@ -37,8 +32,7 @@ from src.db.mysql_dao import MySQLConfig, MySQLDAO, MySQLNotConfigured, ReadOnly
 
 def _load_settings() -> dict:
     try:
-        with open("config/settings.yaml") as f:
-            return yaml.safe_load(f) or {}
+        return load_settings()
     except FileNotFoundError:
         return {}
 
@@ -83,10 +77,12 @@ def main() -> int:
         help="Restrict --entities/--names to one entity type (repeatable)",
     )
     parser.add_argument("--limit", type=int, default=20, help="Row cap for --entities/--search")
+    add_config_arguments(parser, only=("mysql",))
     args = parser.parse_args()
+    load_config(args)
 
     try:
-        dao = MySQLDAO(MySQLConfig.from_env(_load_settings()))
+        dao = MySQLDAO(MySQLConfig.from_config(_load_settings()))
     except MySQLNotConfigured as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

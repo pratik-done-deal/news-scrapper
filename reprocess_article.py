@@ -3,35 +3,40 @@ Re-run deal extraction on a single article by its ID.
 Deletes any existing Deal node(s) for the article and inserts a fresh one.
 
 Usage:
-    python reprocess_article.py <article_id>
+    python reprocess_article.py <article_id> --neo4j-password ... --groq-api-key ...
 """
 
-import os
+import argparse
 import sys
 
-import yaml
-from dotenv import load_dotenv
 from groq import Groq
 from neo4j import GraphDatabase
 
+from src.config import ConfigError, add_config_arguments, load_config
 from src.db.repository import NewsRepository
+from src.paths import load_settings
 from src.processor.extractor import DealExtractor
-
-load_dotenv()
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        sys.exit("Usage: python reprocess_article.py <article_id>")
+    parser = argparse.ArgumentParser(description="Re-run deal extraction on one article")
+    parser.add_argument("article_id", help="Article node id")
+    add_config_arguments(parser, only=("neo4j", "groq", "logging"))
+    args = parser.parse_args()
 
-    article_id     = sys.argv[1]
-    neo4j_uri      = os.environ.get("NEO4J_URI", "neo4j://127.0.0.1:7687")
-    neo4j_user     = os.environ.get("NEO4J_USER", "neo4j")
-    neo4j_password = os.environ["NEO4J_PASSWORD"]
-    neo4j_database = os.environ.get("NEO4J_DATABASE", "newsscrapedatabase")
-    groq_api_key   = os.environ["GROQ_API_KEY"]
+    config = load_config(args)
+    article_id = args.article_id
+    try:
+        neo4j_password = config.require_neo4j_password()
+        groq_api_key = config.require_groq_api_key()
+    except ConfigError as exc:
+        sys.exit(f"Error: {exc}")
 
-    settings = yaml.safe_load(open("config/settings.yaml"))
+    neo4j_uri      = config.neo4j.uri
+    neo4j_user     = config.neo4j.user
+    neo4j_database = config.neo4j.database
+
+    settings = load_settings()
     model = settings["groq"]["model"]
 
     driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
@@ -61,6 +66,7 @@ def main() -> None:
 
         print(f"buyer      : {deal.buyer}")
         print(f"seller     : {deal.seller}")
+        print(f"target     : {deal.target_company}")
         print(f"deal_value : {deal.deal_value}")
         print(f"deal_type  : {deal.deal_type}")
         print(f"sector     : {deal.sector}")
@@ -85,6 +91,7 @@ def main() -> None:
             article_id=article_id,
             buyer=deal.buyer,
             seller=deal.seller,
+            target_company=deal.target_company,
             deal_value=deal.deal_value,
             sector=deal.sector,
             sub_sector=deal.sub_sector,

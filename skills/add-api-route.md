@@ -41,6 +41,29 @@ from .routes.my_module import router as my_router
 app.include_router(my_router, prefix="/my-prefix", tags=["my-tag"])
 ```
 
+## Authentication
+A new route is authenticated automatically. `src/api/app.py` declares
+`dependencies=[Depends(require_session)]` on the app itself, so every route it
+serves has its session validated against company-service before the handler
+runs — there is nothing to add.
+
+Two things to know:
+
+- The `apiEndPoint` sent for authorization is the **route template**, e.g.
+  `/api/v1/news-scrapper/deals/{deal_id}`. A new endpoint needs a matching `user_auth` row on
+  the company-service side, or every call to it comes back 401/403.
+- To make a route public, add `(METHOD, "/full/route/template")` to
+  `EXEMPT_ROUTES` in `src/api/auth.py`. That list is the only way out, on
+  purpose — forgetting to do anything leaves the route protected.
+
+To read the caller inside a handler:
+```python
+from ..auth import UserSession, get_user_session
+
+def my_endpoint(session: UserSession = Depends(get_user_session)):
+    return {"profile_id": session.profile_id}
+```
+
 ## Dependency Injection
 Always use `conn: Neo4jConnection = Depends(get_connection)` from `src/api/dependencies.py` — never instantiate `Neo4jConnection` directly in a route.
 

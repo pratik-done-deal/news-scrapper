@@ -16,11 +16,14 @@ import pytest
 
 from src.db import mysql_queries as mq
 from src.db.mysql_dao import MySQLConfig, MySQLDAO
+from src.processor.entity_link import resolve_entity, resolve_ref
 from src.processor.watchlist import WatchlistMatcher, build_entries, build_gate_terms
 
 TEST_DATABASE = os.environ.get("TEST_MYSQL_DATABASE", "company_db_test")
 
-ACTIVE_SELLERS = 35
+# 33 auto-numbered sellers plus the 10 seeded with explicit Done Deal ids
+# (S5123 Delhivery … S5132 Zoho), which the entity news flow resolves against.
+ACTIVE_SELLERS = 43
 ACTIVE_BUYERS = 28
 ACTIVE_LEADS = 26
 
@@ -285,6 +288,48 @@ def test_gate_built_from_the_full_watchlist_matches_real_coverage(dao):
 def test_gate_drops_an_article_about_no_tracked_company(dao):
     matcher = WatchlistMatcher(build_gate_terms(mq.fetch_watchlist(dao)))
     assert matcher.match("Monsoon rainfall above average this week", "No companies here.") == []
+
+
+# --------------------------------------------------------------------------
+# Entity references — the UI's "S5123" resolving to a real row
+# --------------------------------------------------------------------------
+
+def test_seller_reference_resolves_to_the_expected_company(dao):
+    """S5123 is Delhivery in the fixture, and must stay so across reseeds — the
+    entity news flow keys off exactly this."""
+    entity = resolve_ref(dao, "S5123")
+
+    assert entity is not None
+    assert entity.entity_type == "seller"
+    assert entity.entity_id == 5123
+    assert entity.company_name == "Delhivery Limited"
+    assert entity.search_term == "Delhivery"
+    assert entity.ref == "S5123"
+
+
+def test_registered_name_falls_back_to_its_suffix_stripped_form(dao):
+    """Oracle has no brand_name, so the term is the registered name minus the
+    legal suffix — "Oracle", which is what the press writes."""
+    assert resolve_ref(dao, "S5131").search_term == "Oracle"
+
+
+def test_unknown_reference_resolves_to_none(dao):
+    assert resolve_ref(dao, "S999999") is None
+
+
+def test_prefix_selects_the_table(dao):
+    """Seller 5123 exists; buyer 5123 does not. The prefix is what disambiguates."""
+    assert resolve_ref(dao, "S5123") is not None
+    assert resolve_ref(dao, "B5123") is None
+
+
+def test_excluded_seller_does_not_resolve(dao):
+    """A row the active filter drops must not serve news."""
+    inactive_id = dao.fetch_value(
+        "SELECT id FROM company WHERE status = %s LIMIT 1", ("Inactive",)
+    )
+    assert inactive_id is not None, "fixture should contain an Inactive seller"
+    assert resolve_entity(dao, mq.SELLER, int(inactive_id)) is None
 
 
 # --------------------------------------------------------------------------

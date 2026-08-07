@@ -56,15 +56,21 @@ Process 2 — P2 Consumer (article-processor)
 | `(Company)-[:SOLD]->(Deal)` | Target in acquisition / divesting party |
 | `(Company)-[:INVESTED_IN]->(Deal)` | VC/PE investor in funding round |
 | `(Company)-[:INVOLVED_IN]->(Deal)` | Startup receiving investment |
+| `(Company)-[:ABOUT]->(Deal)` | Deal's subject when it is neither party — the listed company whose shares moved in a stake sale |
 
-### Role → Relationship Mapping (`repository.py`)
+### Role → Relationship Mapping (`db/models.py`)
+
+Defined in `models.py`, imported by both `repository.py` (write) and `queries.py`
+(read) so the two cannot drift. `COMPANY_DEAL_RELS` joins them into the
+`BOUGHT|SOLD|...` pattern every "any company on this deal" query must use.
 
 ```python
-_ROLE_TO_REL = {
+ROLE_TO_REL = {
     "buyer":    "BOUGHT",
     "seller":   "SOLD",
     "investor": "INVESTED_IN",
     "company":  "INVOLVED_IN",
+    "target":   "ABOUT",
 }
 
 # funding_round → (investor, company); everything else → (buyer, seller)
@@ -126,7 +132,7 @@ LLM settings: `temperature=0.1`, `response_format={"type": "json_object"}`, cont
 - **Pydantic v2:** `@field_validator` + `@classmethod`. `model_validator` for cross-field logic.
 - **Cypher:** Always `$param` parameterized. Never interpolate user-controlled strings into Cypher.
 - **Logging:** Format `[LABEL|source|process] message`. `P1 producer` = scraper process, `P2 consumer` = processing subprocess.
-- **Secrets:** Load from env / `.env`. Never hardcode. Never commit `.env` or `news_agent.log`.
+- **Secrets:** Passed as CLI flags, defaulting to empty in `src/config.py`. Never hardcode a real credential there; never commit `news_agent.log`.
 - **Scraper errors:** `extract_article()` must return `(None, None, None)` on any failure — never raise.
 
 ---

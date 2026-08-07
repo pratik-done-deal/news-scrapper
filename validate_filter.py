@@ -3,21 +3,19 @@ Validation script — compares AI filter vs keyword filter side by side.
 No data is written to the database.
 
 Run:
-    python validate_filter.py
+    python validate_filter.py --groq-api-key <key>
 """
 
+import argparse
 import json
-import os
 import sys
 
-import yaml
-from dotenv import load_dotenv
 from groq import Groq
 
 from src.agent import SCRAPER_REGISTRY
+from src.config import ConfigError, add_config_arguments, load_config
+from src.paths import load_settings, load_sources_config
 from src.processor.filter import NewsFilter
-
-load_dotenv()
 
 AI_PROMPT = """\
 You are a financial news classifier. Determine if the article is about M&A or business deal activity.
@@ -64,12 +62,17 @@ def ai_check(client: Groq, model: str, title: str | None, content: str | None) -
 
 
 def main() -> None:
-    groq_api_key = os.environ.get("GROQ_API_KEY")
-    if not groq_api_key:
-        sys.exit("GROQ_API_KEY not set in .env")
+    parser = argparse.ArgumentParser(description="Compare the AI filter against the keyword filter")
+    add_config_arguments(parser, only=("groq", "logging"))
+    config = load_config(parser.parse_args())
 
-    settings = yaml.safe_load(open("config/settings.yaml"))
-    sources = yaml.safe_load(open("config/sources.yaml"))["sources"]
+    try:
+        groq_api_key = config.require_groq_api_key()
+    except ConfigError as exc:
+        sys.exit(f"Error: {exc}")
+
+    settings = load_settings()
+    sources = load_sources_config()["sources"]
 
     kw_filter = NewsFilter()
     groq_client = Groq(api_key=groq_api_key)

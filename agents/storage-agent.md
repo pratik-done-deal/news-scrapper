@@ -28,6 +28,13 @@ All Neo4j read/write operations. Manages the graph schema, article persistence, 
 | `SOLD` | Company → Deal | Company is the acquisition target or divestor |
 | `INVESTED_IN` | Company → Deal | Company is the VC/PE investor |
 | `INVOLVED_IN` | Company → Deal | Company is the startup receiving investment |
+| `ABOUT` | Company → Deal | Company is the deal's subject but not a party to it — e.g. the listed company whose shares a VC sold in a block deal |
+
+`Company.external_id` holds the Done Deal reference ("S5124"), set by
+`register_company()` and uniquely constrained. It is keyed on the **brand**
+where one exists: news is filed under "Meesho", not "Fashnear Technologies
+Private Limited", so registering the registered name would stamp an orphan node
+and the feed would return nothing.
 
 ## Skills
 
