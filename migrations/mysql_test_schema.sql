@@ -135,7 +135,7 @@ INSERT INTO company (id, name, brand_name, website, status) VALUES
     (5127, 'Parviom Technologies Private Limited', NULL,          NULL,              'active'),
     (5128, 'Onesta Foods Private Limited',         'Onesta',      NULL,              'active'),
     (5129, 'Plugstack Technologies Private Limited','Plugstack',  NULL,              'active'),
-    (5130, 'Rapidbox Commerce Private Limited',    'Rapidbox',    NULL,              'active'),
+    (6270, 'Rapidbox Commerce Private Limited',    'Rapidbox',    NULL,              'active'),
     (5131, 'Oracle Corporation',                   NULL,          'oracle.com',      'active');
 
 -- Sellers the active filter must exclude.
