@@ -143,7 +143,7 @@ class RecordingExecutor:
 
 def build_client(registered=REGISTERED):
     app = FastAPI()
-    app.include_router(tracked_companies.router, prefix="/api/v1")
+    app.include_router(tracked_companies.router, prefix="/api/v1/news-scrapper")
     app.state.settings = {"scraping": {}, "groq": {}}
     app.state.sources_config = {"sources": [{"name": "Entrackr News", "search_url": "x{query}"}]}
     app.state.executor = RecordingExecutor()
@@ -158,7 +158,7 @@ def test_registering_returns_202_and_a_backfill_job():
     client, app = build_client()
 
     response = client.post(
-        "/api/v1/tracked-companies",
+        "/api/v1/news-scrapper/tracked-companies",
         json={"company_id": "S5122", "company_name": "Zoho"},
     )
 
@@ -177,7 +177,7 @@ def test_a_new_node_with_no_deals_is_reported_so_a_bad_name_is_visible():
     client, _ = build_client({**REGISTERED, "created": True, "deal_count": 0})
 
     body = client.post(
-        "/api/v1/tracked-companies",
+        "/api/v1/news-scrapper/tracked-companies",
         json={"company_id": "S5124", "company_name": "Fashnear Technologies Private Limited"},
     ).json()
 
@@ -189,7 +189,7 @@ def test_scrape_false_records_the_link_without_scraping():
     client, app = build_client()
 
     response = client.post(
-        "/api/v1/tracked-companies",
+        "/api/v1/news-scrapper/tracked-companies",
         json={"company_id": "S5122", "company_name": "Zoho", "scrape": False},
     )
 
@@ -206,7 +206,7 @@ def test_news_is_looked_up_by_reference_not_by_name():
     ), patch.object(
         tracked_companies.queries, "get_news_by_external_id", return_value=(1, [DEAL_ROW])
     ) as news:
-        response = client.get("/api/v1/tracked-companies/S5122/news")
+        response = client.get("/api/v1/news-scrapper/tracked-companies/S5122/news")
 
     assert response.status_code == 200
     assert news.call_args.args[1] == "S5122"
@@ -220,7 +220,7 @@ def test_unregistered_reference_is_404_not_an_empty_feed():
     client, _ = build_client()
 
     with patch.object(tracked_companies.queries, "get_registered_company", return_value=None):
-        response = client.get("/api/v1/tracked-companies/S9999/news")
+        response = client.get("/api/v1/news-scrapper/tracked-companies/S9999/news")
 
     assert response.status_code == 404
 
@@ -233,7 +233,7 @@ def test_registered_company_with_no_deals_is_an_empty_200():
     ), patch.object(
         tracked_companies.queries, "get_news_by_external_id", return_value=(0, [])
     ):
-        response = client.get("/api/v1/tracked-companies/S5122/news")
+        response = client.get("/api/v1/news-scrapper/tracked-companies/S5122/news")
 
     assert response.status_code == 200
     assert response.json()["items"] == []
@@ -249,7 +249,7 @@ def test_filters_and_paging_reach_the_query():
         tracked_companies.queries, "get_news_by_external_id", return_value=(0, [])
     ) as news:
         client.get(
-            "/api/v1/tracked-companies/S5122/news",
+            "/api/v1/news-scrapper/tracked-companies/S5122/news",
             params={"page": 2, "page_size": 5, "bookmarked": "true", "date_from": "2026-01-01"},
         )
 
@@ -265,6 +265,6 @@ def test_lookup_is_case_insensitive_on_the_reference():
     with patch.object(
         tracked_companies.queries, "get_registered_company", return_value=dict(REGISTERED)
     ) as lookup:
-        client.get("/api/v1/tracked-companies/s5122")
+        client.get("/api/v1/news-scrapper/tracked-companies/s5122")
 
     assert lookup.call_args.args[1] == "S5122"

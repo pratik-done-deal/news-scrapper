@@ -279,7 +279,8 @@ class RegisteredCompanyResponse(BaseModel):
                     "check brand_name.",
     )
     job_id: Optional[str] = Field(
-        None, description="Backfill scrape job; poll GET /api/v1/companies/scrape/{job_id}"
+        None,
+        description="Backfill scrape job; poll GET /api/v1/news-scrapper/companies/scrape/{job_id}",
     )
 
 

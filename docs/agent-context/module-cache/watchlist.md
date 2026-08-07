@@ -37,8 +37,8 @@ Do not implement a watchlist run by looping `scrape_company()`: it opens a proce
 ## Config and API
 
 - `config/settings.yaml` -> `watchlist`: `default_since_hours` (0 disables the cutoff), `max_entities_per_run`, `min_term_length`, `gate_listing_sources`.
-- `GET /api/v1/companies/watchlist` — preview: totals, counts by type, derived terms. Cheap; call before spending a run.
-- `POST /api/v1/companies/scrape/watchlist` — 202 + `ScrapeJobResponse`, polled via the existing `GET /companies/scrape/{job_id}`.
+- `GET /api/v1/news-scrapper/companies/watchlist` — preview: totals, counts by type, derived terms. Cheap; call before spending a run.
+- `POST /api/v1/news-scrapper/companies/scrape/watchlist` — 202 + `ScrapeJobResponse`, polled via the existing `GET /companies/scrape/{job_id}`.
 - Both require MySQL: `get_mysql_dao` returns 503 when it is not configured.
 
 ## Verification

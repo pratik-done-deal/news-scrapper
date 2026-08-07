@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from neo4j import GraphDatabase
 
+from . import API_PREFIX
 from .auth import AuthClient, AuthConfig, auth_enabled, require_session
 from .job_manager import JobManager
 from .routes import (
@@ -178,15 +179,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(articles.router, prefix="/api/v1")
-app.include_router(companies.router, prefix="/api/v1")
-app.include_router(company_scrape.router, prefix="/api/v1")
-app.include_router(deals.router, prefix="/api/v1")
-app.include_router(entities.router, prefix="/api/v1")
-app.include_router(tracked_companies.router, prefix="/api/v1")
-app.include_router(scrape.router, prefix="/api/v1")
-app.include_router(extract.router, prefix="/api/v1")
-app.include_router(analytics.router, prefix="/api/v1")
+app.include_router(articles.router, prefix=API_PREFIX)
+app.include_router(companies.router, prefix=API_PREFIX)
+app.include_router(company_scrape.router, prefix=API_PREFIX)
+app.include_router(deals.router, prefix=API_PREFIX)
+app.include_router(entities.router, prefix=API_PREFIX)
+app.include_router(tracked_companies.router, prefix=API_PREFIX)
+app.include_router(scrape.router, prefix=API_PREFIX)
+app.include_router(extract.router, prefix=API_PREFIX)
+app.include_router(analytics.router, prefix=API_PREFIX)
 
 
 @app.get("/health", tags=["health"])

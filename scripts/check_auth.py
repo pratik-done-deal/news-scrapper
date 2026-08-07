@@ -17,7 +17,7 @@ local stack.
 Usage:
     python scripts/check_auth.py --session <sessionId>       # one probe + verdict
     python scripts/check_auth.py --session <id> --all-routes # every endpoint
-    python scripts/check_auth.py --session <id> --endpoint /api/v1/deals
+    python scripts/check_auth.py --session <id> --endpoint /api/v1/news-scrapper/deals
     python scripts/check_auth.py --session <id> --json       # machine-readable
 
 Env (read from .env / environment):
@@ -43,7 +43,7 @@ from fastapi import HTTPException
 
 from src.api.auth import EXEMPT_ROUTES, AuthClient, AuthConfig
 
-PROBE_ENDPOINT = "/api/v1/deals"
+PROBE_ENDPOINT = "/api/v1/news-scrapper/deals"
 
 OK = "\033[32m"
 BAD = "\033[31m"

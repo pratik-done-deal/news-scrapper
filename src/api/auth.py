@@ -42,6 +42,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, ValidationError
 
+from . import API_PREFIX
 from ..logging_config import profile_id_ctx
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,7 @@ _TRUTHY = {"1", "true", "yes", "on"}
 EXEMPT_ROUTES = frozenset(
     {
         ("GET", "/health"),
-        ("POST", "/api/v1/tracked-companies"),
+        ("POST", f"{API_PREFIX}/tracked-companies"),
     }
 )
 
@@ -343,7 +344,8 @@ def extract_session_id(request: Request) -> Optional[str]:
 
 
 def api_endpoint_for(request: Request) -> str:
-    """The route template this request matched, e.g. `/api/v1/deals/{deal_id}`.
+    """The route template this request matched, e.g.
+    `/api/v1/news-scrapper/deals/{deal_id}`.
 
     Falls back to the literal path only if routing left no route on the scope,
     which should not happen for a matched request.

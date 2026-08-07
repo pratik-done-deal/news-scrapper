@@ -23,6 +23,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 
+from .. import API_PREFIX
 from ..dependencies import get_connection, get_job_manager
 from ..job_manager import JobManager
 from ..schemas import (
@@ -146,7 +147,10 @@ def get_company_news(
     if company is None:
         raise HTTPException(
             status_code=404,
-            detail=f"'{company_id}' is not registered — POST /api/v1/tracked-companies first",
+            detail=(
+                f"'{company_id}' is not registered — "
+                f"POST {API_PREFIX}/tracked-companies first"
+            ),
         )
 
     offset = (page - 1) * page_size
