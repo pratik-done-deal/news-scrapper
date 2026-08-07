@@ -21,13 +21,13 @@ import argparse
 import sys
 from pathlib import Path
 
-import yaml
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.paths import ENV_PATH, load_settings
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(ENV_PATH)
 except Exception:
     pass
 
@@ -37,8 +37,7 @@ from src.db.mysql_dao import MySQLConfig, MySQLDAO, MySQLNotConfigured, ReadOnly
 
 def _load_settings() -> dict:
     try:
-        with open("config/settings.yaml") as f:
-            return yaml.safe_load(f) or {}
+        return load_settings()
     except FileNotFoundError:
         return {}
 

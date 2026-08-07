@@ -9,15 +9,15 @@ Usage:
 import os
 import sys
 
-import yaml
 from dotenv import load_dotenv
 from groq import Groq
 from neo4j import GraphDatabase
 
 from src.db.repository import NewsRepository
+from src.paths import ENV_PATH, load_settings
 from src.processor.extractor import DealExtractor
 
-load_dotenv()
+load_dotenv(ENV_PATH)
 
 
 def main() -> None:
@@ -31,7 +31,7 @@ def main() -> None:
     neo4j_database = os.environ.get("NEO4J_DATABASE", "newsscrapedatabase")
     groq_api_key   = os.environ["GROQ_API_KEY"]
 
-    settings = yaml.safe_load(open("config/settings.yaml"))
+    settings = load_settings()
     model = settings["groq"]["model"]
 
     driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))

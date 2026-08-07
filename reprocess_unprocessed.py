@@ -18,21 +18,18 @@ import logging
 import os
 import sys
 
-import yaml
 from dotenv import load_dotenv
 from groq import Groq
 from neo4j import GraphDatabase
 
 from src.db.repository import NewsRepository
+from src.logging_config import setup_logging
+from src.paths import ENV_PATH, load_settings
 from src.processor.extractor import DealExtractor
 
-load_dotenv()
+load_dotenv(ENV_PATH)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -76,7 +73,7 @@ def main() -> None:
     if not neo4j_password or not groq_api_key:
         sys.exit("NEO4J_PASSWORD and GROQ_API_KEY must be set in environment.")
 
-    settings = yaml.safe_load(open("config/settings.yaml"))
+    settings = load_settings()
     model = settings["groq"]["model"]
 
     driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))

@@ -10,14 +10,14 @@ import json
 import os
 import sys
 
-import yaml
 from dotenv import load_dotenv
 from groq import Groq
 
 from src.agent import SCRAPER_REGISTRY
+from src.paths import ENV_PATH, load_settings, load_sources_config
 from src.processor.filter import NewsFilter
 
-load_dotenv()
+load_dotenv(ENV_PATH)
 
 AI_PROMPT = """\
 You are a financial news classifier. Determine if the article is about M&A or business deal activity.
@@ -68,8 +68,8 @@ def main() -> None:
     if not groq_api_key:
         sys.exit("GROQ_API_KEY not set in .env")
 
-    settings = yaml.safe_load(open("config/settings.yaml"))
-    sources = yaml.safe_load(open("config/sources.yaml"))["sources"]
+    settings = load_settings()
+    sources = load_sources_config()["sources"]
 
     kw_filter = NewsFilter()
     groq_client = Groq(api_key=groq_api_key)

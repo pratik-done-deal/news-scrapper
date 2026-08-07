@@ -1,28 +1,16 @@
 import argparse
-import logging
 import os
 import sys
 
-import yaml
 from dotenv import load_dotenv
 
 from src.agent import NewsAgent
+from src.logging_config import setup_logging
+from src.paths import ENV_PATH, load_settings, load_sources_config
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] [%(processName)s] %(name)s: %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("news_agent.log"),
-    ],
-)
+setup_logging()
 
-load_dotenv()
-
-
-def load_yaml(path: str) -> dict:
-    with open(path) as f:
-        return yaml.safe_load(f)
+load_dotenv(ENV_PATH)
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,8 +48,8 @@ def main() -> None:
     if not groq_api_key:
         raise EnvironmentError("GROQ_API_KEY is not set in environment")
 
-    settings = load_yaml("config/settings.yaml")
-    sources_config = load_yaml("config/sources.yaml")
+    settings = load_settings()
+    sources_config = load_sources_config()
 
     agent = NewsAgent(
         settings,

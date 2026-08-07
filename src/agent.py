@@ -1,6 +1,5 @@
 import logging
 import multiprocessing
-import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
@@ -9,6 +8,7 @@ from typing import Optional
 from groq import Groq
 
 from .db.repository import NewsRepository
+from .logging_config import setup_logging
 from .processor.company_signal import deal_amount_token, is_duplicate_of_deal
 from .processor.extractor import DealExtractor
 from .processor.filter import NewsFilter
@@ -41,7 +41,6 @@ IST = timezone(timedelta(hours=5, minutes=30))
 
 SCRAPER_LABEL = "Scraper"
 STORAGE_LABEL = "Storage"
-LOG_FORMAT = "%(asctime)s [%(levelname)s] [%(processName)s] %(name)s: %(message)s"
 MAX_THREADS = 6
 
 
@@ -70,19 +69,12 @@ def _to_ist_datetime(date_str: str, end_of_day: bool = False) -> datetime:
 
 
 def _ensure_worker_logging() -> None:
-    """Make worker-process INFO logs visible even when spawn starts fresh."""
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-    if root.handlers:
-        return
-    logging.basicConfig(
-        level=logging.INFO,
-        format=LOG_FORMAT,
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler("news_agent.log"),
-        ],
-    )
+    """Make worker-process INFO logs visible even when spawn starts fresh.
+
+    Stream only: workers inherit the parent's stdout, and several processes
+    rotating one log file concurrently drops and interleaves records.
+    """
+    setup_logging(to_file=False)
 
 
 def _build_scraper(
