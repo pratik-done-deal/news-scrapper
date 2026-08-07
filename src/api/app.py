@@ -20,10 +20,12 @@ from .routes import (
     entities,
     extract,
     scrape,
+    tracked_companies,
 )
 from ..agent import NewsAgent
 from ..db.mysql_dao import MySQLConfig, MySQLDAO, MySQLNotConfigured
 from ..db.queries import Neo4jConnection
+from ..db.repository import NewsRepository
 from ..scheduler.service import SchedulerService
 
 load_dotenv()
@@ -72,6 +74,16 @@ async def lifespan(app: FastAPI):
         max_connection_pool_size=db_cfg.get("pool_size", 5),
     )
     app.state.conn = Neo4jConnection(driver, neo4j_database)
+    # Write path for the API. Routes read through `conn` (queries.py); the only
+    # thing they write is the Done Deal → Company link, which belongs to the
+    # repository. Schema init already ran above, so it is skipped here.
+    app.state.repo = NewsRepository(
+        uri=neo4j_uri,
+        user=neo4j_user,
+        password=neo4j_password,
+        database=neo4j_database,
+        pool_size=db_cfg.get("pool_size", 5),
+    )
     app.state.mysql_dao = _build_mysql_dao(settings)
     app.state.settings = settings
     app.state.sources_config = sources_config
@@ -97,6 +109,7 @@ async def lifespan(app: FastAPI):
 
     app.state.scheduler_service.shutdown()
     app.state.executor.shutdown(wait=False)
+    app.state.repo.close()
     app.state.conn.driver.close()
     if app.state.mysql_dao is not None:
         app.state.mysql_dao.close()
@@ -122,6 +135,7 @@ app.include_router(companies.router, prefix="/api/v1")
 app.include_router(company_scrape.router, prefix="/api/v1")
 app.include_router(deals.router, prefix="/api/v1")
 app.include_router(entities.router, prefix="/api/v1")
+app.include_router(tracked_companies.router, prefix="/api/v1")
 app.include_router(scrape.router, prefix="/api/v1")
 app.include_router(extract.router, prefix="/api/v1")
 app.include_router(analytics.router, prefix="/api/v1")

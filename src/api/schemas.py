@@ -212,6 +212,87 @@ class WatchlistScrapeRequest(BaseModel):
         return self
 
 
+class RegisterCompanyRequest(BaseModel):
+    """Done Deal telling us to track a company and go find its news."""
+
+    company_id: str = Field(
+        ...,
+        min_length=2,
+        description="Done Deal reference, e.g. 'S5122'. Prefix S/B/L then the row id.",
+    )
+    company_name: str = Field(
+        ...,
+        min_length=2,
+        description="The company name, e.g. 'Meesho'. This is what gets typed into each "
+                    "news site's search, so it should be the name coverage uses. Legal "
+                    "suffixes are stripped automatically ('Delhivery Limited' → 'Delhivery').",
+    )
+    brand_name: Optional[str] = Field(
+        None,
+        description="Optional. Only needed when company_name is a registered entity name "
+                    "the press never uses ('Fashnear Technologies Private Limited' vs "
+                    "'Meesho'); news sites have nothing filed under the former, so a search "
+                    "for it returns nothing. Omit when the two are the same.",
+    )
+    scrape: bool = Field(
+        True,
+        description="Run a backfill scrape for this company. Set false to only "
+                    "record the link — useful when re-syncing a company already scraped.",
+    )
+
+    @field_validator("company_id")
+    @classmethod
+    def validate_company_id(cls, v: str) -> str:
+        from ..processor.entity_link import InvalidEntityRef, parse_entity_ref
+
+        try:
+            parse_entity_ref(v)
+        except InvalidEntityRef as exc:
+            raise ValueError(str(exc)) from exc
+        return v.strip().upper().replace("-", "")
+
+    @field_validator("company_name")
+    @classmethod
+    def validate_company_name(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("company_name must not be blank")
+        return v.strip()
+
+
+class RegisteredCompanyResponse(BaseModel):
+    """The stored link between a Done Deal reference and a Company node."""
+
+    company_id: str = Field(..., description="Done Deal reference, e.g. 'S5122'")
+    company_name: str = Field(..., description="Name Done Deal sent")
+    graph_name: str = Field(
+        ..., description="Normalised name the node is keyed by, and news is searched under"
+    )
+    node_id: UUID
+    linked_at: Optional[str] = None
+    created: Optional[bool] = Field(
+        None, description="True when this call created the node rather than stamping an existing one"
+    )
+    deal_count: Optional[int] = Field(
+        None,
+        description="Deals already linked to this node. `created: true` with `deal_count: 0` "
+                    "usually means the name did not match anything the extractor has seen — "
+                    "check brand_name.",
+    )
+    job_id: Optional[str] = Field(
+        None, description="Backfill scrape job; poll GET /api/v1/companies/scrape/{job_id}"
+    )
+
+
+class CompanyNewsResponse(BaseModel):
+    """A registered company's deal feed, keyed by its Done Deal reference."""
+
+    company: RegisteredCompanyResponse
+    total: int
+    page: int
+    page_size: int
+    items: list[DealWithArticleResponse]
+
+
 class EntitySummary(BaseModel):
     """A company DB entity as the UI refers to it, plus the name its news is
     filed under in the news graph."""

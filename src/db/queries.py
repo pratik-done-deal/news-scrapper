@@ -199,6 +199,105 @@ def search_articles_by_company_name(
     return total, items
 
 
+def get_registered_company(conn: Neo4jConnection, external_id: str) -> Optional[dict]:
+    """The Company node carrying this Done Deal reference, or None."""
+    with conn.session() as session:
+        record = session.run(
+            """
+            MATCH (c:Company {external_id: $external_id})
+            RETURN c.id AS id, c.name AS name, c.external_id AS external_id,
+                   c.external_name AS external_name, c.linked_at AS linked_at
+            """,
+            external_id=external_id,
+        ).single()
+        return dict(record) if record else None
+
+
+def get_news_by_external_id(
+    conn: Neo4jConnection,
+    external_id: str,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    bookmarked: Optional[bool] = None,
+    offset: int = 0,
+    limit: int = 20,
+) -> tuple[int, list[dict]]:
+    """A registered company's deals, keyed by its Done Deal reference.
+
+    Same traversal as `search_articles_by_company_name()`, but anchored on an
+    exact, uniquely-constrained property instead of a substring match on the
+    name. That makes the lookup index-backed, and removes the failure mode where
+    one company's name is a substring of another's ("Ola" matching "Ola
+    Electric").
+
+    A deal counts as this company's news by either of two routes:
+
+    1. the extractor linked them — (Company)-[BOUGHT|SOLD|…|ABOUT]->(Deal);
+    2. the article was found by this company's own on-site search, recorded on
+       `Article.searched_company`.
+
+    Route 2 exists because route 1 depends on the LLM naming this company as a
+    party. It often will not: an article found by searching "Meesho" may name
+    only the target and the investors, and a registered name that differs from
+    the one the press uses ("Fashnear Technologies" vs "Meesho") would match
+    nothing at all. Provenance is the more reliable signal — we know what we
+    searched for — so it backs up the graph rather than relying on it.
+
+    Returns (0, []) for an unregistered reference — callers that need to tell
+    "not registered" from "registered with no deals" should check
+    `get_registered_company()` first.
+    """
+    conditions: list[str] = []
+    params: dict = {"external_id": external_id}
+    if date_from:
+        params["date_from"] = datetime.combine(date_from, time.min).replace(tzinfo=timezone.utc).isoformat()
+        conditions.append("art.published_at >= $date_from")
+    if date_to:
+        params["date_to"] = datetime.combine(date_to, time(23, 59, 59)).replace(tzinfo=timezone.utc).isoformat()
+        conditions.append("art.published_at <= $date_to")
+    bookmark_cond = _bookmark_condition(bookmarked)
+    if bookmark_cond:
+        conditions.append(bookmark_cond)
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    # Anchor on the registered node, then collect its deals by both routes
+    # before filtering, so the date/bookmark predicates apply to the union.
+    match_clause = f"""
+        MATCH (c:Company {{external_id: $external_id}})
+        CALL (c) {{
+            MATCH (c)-[:{COMPANY_DEAL_RELS}]->(d:Deal)<-[:HAS_DEAL]-(art:Article)
+            RETURN d, art
+          UNION
+            MATCH (art:Article)-[:HAS_DEAL]->(d:Deal)
+            WHERE art.searched_company IS NOT NULL
+              AND toLower(art.searched_company) = toLower(c.name)
+            RETURN d, art
+        }}
+    """
+
+    with conn.session() as session:
+        total = session.run(
+            f"{match_clause} {where} RETURN count(DISTINCT d) AS total", **params
+        ).single()["total"]
+
+        result = session.run(
+            f"""
+            {match_clause}
+            {where}
+            WITH DISTINCT d, art
+            RETURN d, art.id AS article_id, art AS article
+            ORDER BY art.published_at DESC
+            SKIP $offset LIMIT $limit
+            """,
+            **params,
+            offset=offset,
+            limit=limit,
+        )
+        items = [_deal_row_with_article(record) for record in result]
+
+    return total, items
+
+
 # ---------------------------------------------------------------------------
 # Deal queries
 # ---------------------------------------------------------------------------

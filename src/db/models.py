@@ -22,6 +22,10 @@ SCHEMA_CONSTRAINTS = [
     "CREATE CONSTRAINT deal_id IF NOT EXISTS FOR (d:Deal) REQUIRE d.id IS UNIQUE",
     "CREATE CONSTRAINT deal_article_id IF NOT EXISTS FOR (d:Deal) REQUIRE d.article_id IS UNIQUE",
     "CREATE CONSTRAINT company_name IF NOT EXISTS FOR (c:Company) REQUIRE c.name IS UNIQUE",
+    # The Done Deal reference (e.g. "S5122"). Unique because it is the key the
+    # frontend reads news by — two companies sharing one ref would merge their
+    # feeds silently.
+    "CREATE CONSTRAINT company_external_id IF NOT EXISTS FOR (c:Company) REQUIRE c.external_id IS UNIQUE",
     "CREATE CONSTRAINT company_signal_id IF NOT EXISTS FOR (s:CompanySignal) REQUIRE s.id IS UNIQUE",
 ]
 
@@ -32,6 +36,7 @@ SCHEMA_INDEXES = [
     "CREATE INDEX article_is_ma_funding_relevant IF NOT EXISTS FOR (a:Article) ON (a.is_ma_funding_relevant)",
     "CREATE INDEX article_scraped_at IF NOT EXISTS FOR (a:Article) ON (a.scraped_at)",
     "CREATE INDEX article_duplicate_of IF NOT EXISTS FOR (a:Article) ON (a.duplicate_of)",
+    "CREATE INDEX article_searched_company IF NOT EXISTS FOR (a:Article) ON (a.searched_company)",
     "CREATE INDEX deal_sector IF NOT EXISTS FOR (d:Deal) ON (d.sector)",
     "CREATE INDEX deal_deal_type IF NOT EXISTS FOR (d:Deal) ON (d.deal_type)",
     "CREATE INDEX deal_extracted_at IF NOT EXISTS FOR (d:Deal) ON (d.extracted_at)",

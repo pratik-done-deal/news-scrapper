@@ -97,6 +97,14 @@ Watchlist runs (news restricted to companies tracked in the company DB) are
 triggered over the API:
 
 ```bash
+# Done Deal push flow — the backend registers a company, the frontend reads by id.
+# No company MySQL needed: the reference is stored on the Company node itself.
+curl -X POST localhost:8000/api/v1/tracked-companies \
+     -H 'Content-Type: application/json' \
+     -d '{"company_id":"S5124","company_name":"Meesho"}'           # 202 + backfill job_id
+curl 'localhost:8000/api/v1/tracked-companies/S5124/news'          # that company's deal feed
+
+# MySQL-read flow (superseded by the above; delete once Done Deal pushes)
 curl 'localhost:8000/api/v1/entities/S5123'                        # resolve a company DB ref
 curl 'localhost:8000/api/v1/entities/S5123/news'                   # that company's deal feed
 curl 'localhost:8000/api/v1/companies/watchlist?limit=20'          # preview search terms

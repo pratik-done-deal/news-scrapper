@@ -26,11 +26,23 @@ LEGAL_SUFFIX_RE = re.compile(
 
 
 def strip_legal_suffix(name: str) -> str:
-    """Drop a trailing legal-entity suffix and collapse whitespace.
+    """Drop trailing legal-entity suffixes and collapse whitespace.
 
     Casing is left alone: this is what a site search should be given.
+
+    Applied repeatedly, because registered names stack suffixes: "Zoho
+    Corporation Private Limited" needs two passes to reach "Zoho". Stripping
+    once leaves "Zoho Corporation", which would key a *different* Company node
+    from the "Zoho" an article names — the deals would attach to one node and
+    the Done Deal reference to the other, and the news feed would come back
+    empty. The loop ends when a pass changes nothing.
     """
-    name = LEGAL_SUFFIX_RE.sub("", name.strip()).strip().rstrip(",").strip()
+    name = name.strip()
+    while True:
+        stripped = LEGAL_SUFFIX_RE.sub("", name).strip().rstrip(",").strip()
+        if stripped == name:
+            break
+        name = stripped
     return re.sub(r"\s+", " ", name)
 
 
