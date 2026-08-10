@@ -4,7 +4,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..dependencies import get_connection
-from ..schemas import DealResponse, DealWithArticleResponse, PaginatedResponse
+from ..schemas import (
+    BookmarkDealRequest,
+    DealResponse,
+    DealWithArticleResponse,
+    PaginatedResponse,
+)
 from ...db import queries
 from ...db.queries import Neo4jConnection
 
@@ -42,27 +47,20 @@ def get_deal(deal_id: UUID, conn: Neo4jConnection = Depends(get_connection)):
     return deal
 
 
-@router.put(
-    "/{deal_id}/bookmark",
+@router.post(
+    "/bookmark",
     response_model=DealWithArticleResponse,
     response_model_exclude_none=True,
 )
-def bookmark_deal(deal_id: UUID, conn: Neo4jConnection = Depends(get_connection)):
-    """Mark a deal as bookmarked (idempotent)."""
-    deal = queries.set_deal_bookmark(conn, deal_id, True)
-    if not deal:
-        raise HTTPException(status_code=404, detail="Deal not found")
-    return deal
+def bookmark_deal(
+    payload: BookmarkDealRequest, conn: Neo4jConnection = Depends(get_connection)
+):
+    """Set or clear a deal's bookmark (idempotent).
 
-
-@router.delete(
-    "/{deal_id}/bookmark",
-    response_model=DealWithArticleResponse,
-    response_model_exclude_none=True,
-)
-def unbookmark_deal(deal_id: UUID, conn: Neo4jConnection = Depends(get_connection)):
-    """Remove a deal's bookmark (idempotent)."""
-    deal = queries.set_deal_bookmark(conn, deal_id, False)
+    The deal id comes in the body: `{"deal_id": "...", "bookmarked": true}`.
+    Omitting `bookmarked` bookmarks the deal; send `false` to remove it.
+    """
+    deal = queries.set_deal_bookmark(conn, payload.deal_id, payload.bookmarked)
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
     return deal

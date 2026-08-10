@@ -212,6 +212,19 @@ class WatchlistScrapeRequest(BaseModel):
         return self
 
 
+class BookmarkDealRequest(BaseModel):
+    """Which deal to bookmark, and whether to set or clear the flag.
+
+    The deal id travels in the body rather than the path so `user_auth` holds a
+    single row for `/api/news/deals/bookmark` instead of one per deal id.
+    """
+
+    deal_id: UUID = Field(..., description="Id of the deal to bookmark.")
+    bookmarked: bool = Field(
+        True, description="True to bookmark, false to remove the bookmark."
+    )
+
+
 class RegisterCompanyRequest(BaseModel):
     """Done Deal telling us to track a company and go find its news."""
 
