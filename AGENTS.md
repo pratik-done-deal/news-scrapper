@@ -268,7 +268,10 @@ unchanged (401 stays 401, 403 stays 403).
   `src/api/app.py`, so a new router is protected without opting in.
 - The `apiEndPoint` sent is the **route template**
   (`/api/news/deals/{deal_id}`), not the literal URL, so `user_auth` needs one
-  row per endpoint rather than one per company id.
+  row per endpoint rather than one per company id. `auth.auth_endpoint_for`
+  guarantees it carries `API_PREFIX` even if a gateway rewrite stripped the
+  prefix from the path that reached uvicorn — a bare `/deals` matches no
+  `user_auth` row and reads as a permission failure it is not.
 - Public endpoints are listed in `auth.EXEMPT_ROUTES`: `GET /health` (probes
   carry no token) and `POST /api/news/tracked-companies` (Done Deal's backend
   pushes companies service-to-service). Swagger and `/openapi.json` are open too.

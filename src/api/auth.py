@@ -14,7 +14,8 @@ own path. We take the verdict verbatim: 401 stays 401, 403 stays 403. Nothing
 here decides authorization locally.
 
 We send the matched route *template*, not the literal URL, so `user_auth` holds
-one row per endpoint instead of one per company id.
+one row per endpoint instead of one per company id. It always carries
+`API_PREFIX`, whatever path actually reached uvicorn — see `auth_endpoint_for`.
 
 `clientIp` in the upstream response is company-service's view of the caller —
 which is us, not the browser. We overwrite it with our own view of the peer, as
@@ -345,6 +346,24 @@ def api_endpoint_for(request: Request) -> str:
     return getattr(route, "path", None) or request.url.path
 
 
+def auth_endpoint_for(request: Request) -> str:
+    """The endpoint as company-service knows it, always under `API_PREFIX`.
+
+    `user_auth` is keyed by the path the client called through the gateway. If
+    a rewrite strips `/api/news` before the request reaches us, the matched
+    template is bare (`/deals`) and matches no row upstream — a 401 that has
+    nothing to do with the caller's permissions. So the prefix is asserted here
+    rather than assumed from the incoming path.
+
+    Only the value sent upstream is normalised: `is_exempt` keeps matching the
+    raw template, because `GET /health` is not under the prefix.
+    """
+    endpoint = api_endpoint_for(request)
+    if endpoint == API_PREFIX or endpoint.startswith(f"{API_PREFIX}/"):
+        return endpoint
+    return f"{API_PREFIX}/{endpoint.lstrip('/')}"
+
+
 def client_ip_for(request: Request, trust_proxy_headers: bool) -> Optional[str]:
     if trust_proxy_headers:
         forwarded = request.headers.get("X-Forwarded-For")
@@ -396,7 +415,7 @@ async def require_session(
         raise HTTPException(status_code=401, detail="Missing Authorization header")
 
     client: AuthClient = request.app.state.auth_client
-    api_endpoint = api_endpoint_for(request)
+    api_endpoint = auth_endpoint_for(request)
     # The call is blocking, so it goes to the threadpool rather than stalling
     # the event loop for every concurrent request.
     user_session = await run_in_threadpool(client.validate, session_id, api_endpoint)

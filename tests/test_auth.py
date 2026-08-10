@@ -12,6 +12,7 @@ import requests
 from fastapi import Depends, FastAPI, Request
 from fastapi.testclient import TestClient
 
+from src.api import API_PREFIX
 from src.api.auth import (
     AuthClient,
     AuthConfig,
@@ -344,6 +345,37 @@ def test_the_route_template_is_what_gets_authorized_not_the_literal_url():
     )
 
     assert http.post.call_args.kwargs["json"] == {"apiEndPoint": "/api/news/deals/{deal_id}"}
+
+
+def test_the_endpoint_sent_carries_the_api_prefix():
+    """The list route, the one that showed up bare in QA."""
+    client, http = build_auth_client()
+    app = build_app(client)
+
+    @app.get(f"{API_PREFIX}/deals")
+    def deals():
+        return {"items": []}
+
+    TestClient(app).get("/api/news/deals", headers={"Authorization": "sess-1"})
+
+    assert http.post.call_args.kwargs["json"] == {"apiEndPoint": "/api/news/deals"}
+
+
+def test_a_gateway_that_strips_the_prefix_still_authorizes_the_full_endpoint():
+    """`user_auth` is keyed by the path the *client* called. If a rewrite drops
+    `/api/news` before the request reaches us, sending the bare `/deals` we
+    matched on would match no row upstream."""
+    client, http = build_auth_client()
+    app = FastAPI(dependencies=[Depends(require_session)])
+    app.state.auth_client = client
+
+    @app.get("/deals")
+    def deals():
+        return {"items": []}
+
+    TestClient(app).get("/deals", headers={"Authorization": "sess-1"})
+
+    assert http.post.call_args.kwargs["json"] == {"apiEndPoint": "/api/news/deals"}
 
 
 def test_health_answers_without_a_token():
