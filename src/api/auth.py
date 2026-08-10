@@ -33,7 +33,7 @@ from typing import Any, Optional, Tuple
 import requests
 from fastapi import Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, ValidationError
 
 from . import API_PREFIX
@@ -203,7 +203,9 @@ class AuthClient:
                 self.config.validate_url,
                 json={"apiEndPoint": api_endpoint},
                 headers={
-                    "Authorization": f"Bearer {session_id}",
+                    # The raw session id, no scheme prefix — company-service
+                    # compares the header against the stored id verbatim.
+                    "Authorization": session_id,
                     "Content-Type": "application/json",
                 },
                 timeout=self.config.timeout_seconds,
@@ -311,21 +313,17 @@ def _as_int(value: Any, default: int) -> int:
 
 
 def extract_session_id(request: Request) -> Optional[str]:
-    """The session id from the Authorization header, with or without `Bearer`.
+    """The session id from the Authorization header, taken verbatim.
 
-    Done Deal's own curl examples send the raw id, while the documented
-    contract says `Bearer <sessionId>`; both are accepted and normalised.
+    The header carries a bare Done Deal session id and nothing else. A
+    `Bearer ` prefix is no longer recognised: it would travel upstream as part
+    of the id and company-service would refuse it, which is the intended
+    signal that the caller is on the old contract.
     """
     header = request.headers.get("Authorization") or request.headers.get("authorization")
     if not header:
         return None
-    token = header.strip()
-    scheme, _, rest = token.partition(" ")
-    if scheme.lower() == "bearer":
-        # Partitioning rather than slicing a fixed 7 chars, so a bare "Bearer"
-        # with no id resolves to nothing instead of to the id "Bearer".
-        token = rest.strip()
-    return token or None
+    return header.strip() or None
 
 
 def api_endpoint_for(request: Request) -> str:
@@ -356,19 +354,21 @@ def is_exempt(request: Request) -> bool:
 
 
 # Declared only so the scheme shows up in OpenAPI and Swagger grows an
-# Authorize button. `auto_error=False` because the header is read by
-# `extract_session_id`, which also accepts a bare session id; this never
-# rejects anything itself.
-_bearer_scheme = HTTPBearer(
+# Authorize button. An apiKey scheme rather than HTTPBearer because Swagger
+# prepends `Bearer ` to whatever is typed into a bearer box, which would now
+# be sent as part of the session id. `auto_error=False` because the header is
+# read by `extract_session_id`; this never rejects anything itself.
+_session_scheme = APIKeyHeader(
+    name="Authorization",
     auto_error=False,
     scheme_name="DoneDealSession",
-    description="Done Deal session id, with or without the `Bearer ` prefix.",
+    description="Done Deal session id, sent raw with no scheme prefix.",
 )
 
 
 async def require_session(
     request: Request,
-    _credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+    _credentials: Optional[str] = Depends(_session_scheme),
 ) -> Optional[UserSession]:
     """Validate the caller's session before the route runs.
 

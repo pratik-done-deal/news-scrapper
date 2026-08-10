@@ -81,27 +81,29 @@ def test_the_endpoint_being_called_is_sent_not_the_validate_endpoint():
     )
 
 
-def test_the_session_id_travels_as_a_bearer_token():
+def test_the_session_id_travels_raw_with_no_scheme_prefix():
+    """company-service compares the header against the stored session id, so a
+    `Bearer ` prefix would make every call fail."""
     client, http = build_auth_client()
 
     client.validate("sess-1", "/api/news-scrapper/deals")
 
-    assert http.post.call_args.kwargs["headers"]["Authorization"] == "Bearer sess-1"
+    assert http.post.call_args.kwargs["headers"]["Authorization"] == "sess-1"
 
 
 @pytest.mark.parametrize(
     "header, expected",
     [
-        ("Bearer 90062adc6228-f", "90062adc6228-f"),
-        ("bearer 90062adc6228-f", "90062adc6228-f"),
-        # Done Deal's own curl sends the raw id, so both forms must work.
         ("90062adc6228-f", "90062adc6228-f"),
-        ("  Bearer  90062adc6228-f  ", "90062adc6228-f"),
+        ("  90062adc6228-f  ", "90062adc6228-f"),
         ("", None),
-        ("Bearer ", None),
+        ("   ", None),
+        # The prefix is no longer stripped: a caller still on the old contract
+        # sends "Bearer <id>" as the id and is refused upstream.
+        ("Bearer 90062adc6228-f", "Bearer 90062adc6228-f"),
     ],
 )
-def test_session_id_is_read_with_or_without_the_bearer_prefix(header, expected):
+def test_the_session_id_is_read_verbatim_without_stripping_a_prefix(header, expected):
     request = MagicMock(spec=Request)
     request.headers = {"Authorization": header}
     assert extract_session_id(request) == expected
@@ -325,7 +327,7 @@ def test_a_request_with_no_token_is_401_without_calling_the_auth_service():
 
 def test_a_valid_session_reaches_the_route():
     response = TestClient(build_app()).get(
-        "/api/news-scrapper/deals/d1", headers={"Authorization": "Bearer sess-1"}
+        "/api/news-scrapper/deals/d1", headers={"Authorization": "sess-1"}
     )
 
     assert response.status_code == 200
@@ -338,7 +340,7 @@ def test_the_route_template_is_what_gets_authorized_not_the_literal_url():
     client, http = build_auth_client()
 
     TestClient(build_app(client)).get(
-        "/api/news-scrapper/deals/d1", headers={"Authorization": "Bearer sess-1"}
+        "/api/news-scrapper/deals/d1", headers={"Authorization": "sess-1"}
     )
 
     assert http.post.call_args.kwargs["json"] == {"apiEndPoint": "/api/news-scrapper/deals/{deal_id}"}
@@ -369,7 +371,7 @@ def test_the_client_ip_is_ours_not_the_one_company_service_saw():
     """company-service sees this service's IP, not the browser's. Passing its
     value through would file every request under this service's address."""
     response = TestClient(build_app()).get(
-        "/api/news-scrapper/deals/d1", headers={"Authorization": "Bearer sess-1"}
+        "/api/news-scrapper/deals/d1", headers={"Authorization": "sess-1"}
     )
 
     assert response.status_code == 200
@@ -386,11 +388,11 @@ def test_a_cached_session_does_not_leak_the_previous_callers_ip():
 
     first = test_client.get(
         "/api/news-scrapper/deals/d1",
-        headers={"Authorization": "Bearer sess-1", "X-Forwarded-For": "10.0.0.1"},
+        headers={"Authorization": "sess-1", "X-Forwarded-For": "10.0.0.1"},
     )
     second = test_client.get(
         "/api/news-scrapper/deals/d1",
-        headers={"Authorization": "Bearer sess-1", "X-Forwarded-For": "10.0.0.2, 10.9.9.9"},
+        headers={"Authorization": "sess-1", "X-Forwarded-For": "10.0.0.2, 10.9.9.9"},
     )
 
     assert first.json()["client_ip"] == "10.0.0.1"
@@ -404,7 +406,7 @@ def test_a_forwarded_for_header_is_ignored_unless_proxy_headers_are_trusted():
 
     response = TestClient(build_app(client)).get(
         "/api/news-scrapper/deals/d1",
-        headers={"Authorization": "Bearer sess-1", "X-Forwarded-For": "1.2.3.4"},
+        headers={"Authorization": "sess-1", "X-Forwarded-For": "1.2.3.4"},
     )
 
     assert response.json()["client_ip"] == "testclient"
@@ -464,6 +466,6 @@ def test_auth_enabled_guards_a_route_that_never_asks_who_is_calling():
 
     assert test_client.get("/api/news-scrapper/articles").status_code == 401
     assert test_client.get(
-        "/api/news-scrapper/articles", headers={"Authorization": "Bearer sess-1"}
+        "/api/news-scrapper/articles", headers={"Authorization": "sess-1"}
     ).status_code == 200
     assert http.post.call_count == 1

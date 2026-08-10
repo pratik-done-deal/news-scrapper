@@ -100,8 +100,16 @@ class ApiSettings:
     host: str = "0.0.0.0"
     port: int = 8000
     reload: bool = False  # dev only — never true in production
+    # Browser origins the API answers with CORS headers for. `allow_credentials`
+    # is on, so "*" is not usable and every origin has to be named. An origin is
+    # scheme + host + port and nothing else: no trailing slash, and http and
+    # https are two different entries.
     cors_allowed_origins: list[str] = field(
-        default_factory=lambda: ["http://localhost:3000"]
+        default_factory=lambda: [
+            "https://app.done.deals",
+            "https://qa.done.deals",
+            "http://localhost:3000",
+        ]
     )
     scheduler_enabled: bool = True
 

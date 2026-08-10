@@ -117,7 +117,7 @@ python api_server.py \
     --api-host 0.0.0.0 \
     --api-port 8000 \
     --api-reload false \
-    --cors-allowed-origins http://localhost:3000 \
+    --cors-allowed-origins https://qa.done.deals,http://localhost:3000 \
     --scheduler-enabled true \
     --mysql-host 127.0.0.1 \
     --mysql-port 3306 \
@@ -179,7 +179,7 @@ python migrate_pg_to_neo4j.py \
 Watchlist runs (news restricted to companies tracked in the company DB) are
 triggered over the API:
 
-Every call below needs `-H "Authorization: Bearer $SESSION"` except the
+Every call below needs `-H "Authorization: $SESSION"` except the
 `POST /tracked-companies` push, which is exempt (see Authentication).
 
 ```bash
@@ -190,17 +190,17 @@ export SESSION=90062adc6228-f   # a live Done Deal session id
 curl -X POST localhost:8000/api/news-scrapper/tracked-companies \
      -H 'Content-Type: application/json' \
      -d '{"company_id":"S5124","company_name":"Meesho"}'           # 202 + backfill job_id
-curl -H "Authorization: Bearer $SESSION" \
+curl -H "Authorization: $SESSION" \
      'localhost:8000/api/news-scrapper/tracked-companies/S5124/news'          # that company's deal feed
 
 # MySQL-read flow (superseded by the above; delete once Done Deal pushes)
-curl -H "Authorization: Bearer $SESSION" 'localhost:8000/api/news-scrapper/entities/S5123'
-curl -H "Authorization: Bearer $SESSION" 'localhost:8000/api/news-scrapper/entities/S5123/news'
-curl -H "Authorization: Bearer $SESSION" 'localhost:8000/api/news-scrapper/companies/watchlist?limit=20'
+curl -H "Authorization: $SESSION" 'localhost:8000/api/news-scrapper/entities/S5123'
+curl -H "Authorization: $SESSION" 'localhost:8000/api/news-scrapper/entities/S5123/news'
+curl -H "Authorization: $SESSION" 'localhost:8000/api/news-scrapper/companies/watchlist?limit=20'
 curl -X POST localhost:8000/api/news-scrapper/companies/scrape/watchlist \
-     -H "Authorization: Bearer $SESSION" \
+     -H "Authorization: $SESSION" \
      -H 'Content-Type: application/json' -d '{"limit": 2}'
-curl -H "Authorization: Bearer $SESSION" localhost:8000/api/news-scrapper/companies/scrape/<job_id>
+curl -H "Authorization: $SESSION" localhost:8000/api/news-scrapper/companies/scrape/<job_id>
 ```
 
 ## Configuration
@@ -236,7 +236,8 @@ intervals). Anything that identifies a deployment lives in `src/config.py`.
 --api-host               0.0.0.0
 --api-port               8000
 --api-reload             false       # dev only
---cors-allowed-origins   http://localhost:3000    # comma-separated
+--cors-allowed-origins   https://app.done.deals,https://qa.done.deals,http://localhost:3000
+                                     # comma-separated; credentials are allowed so "*" will not work
 --scheduler-enabled      false       # true on at most one instance
 --log-level              INFO
 --log-file               news_agent.log   # "none" for stdout only
@@ -255,7 +256,8 @@ ran the parser. It is not a configuration surface; do not set it by hand.
 ## Authentication
 
 This service owns no users. Every request carries a Done Deal session id in
-`Authorization` (with or without a `Bearer ` prefix), and
+`Authorization` — the raw id, with no `Bearer ` or any other scheme prefix,
+forwarded verbatim upstream — and
 `src/api/auth.py` forwards it to company-service's
 `POST /api/company-service/v1/internal/token/validate` along with the endpoint
 being called. That endpoint answers both questions — is the session live, and

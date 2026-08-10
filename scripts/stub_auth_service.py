@@ -15,9 +15,9 @@ Then point the API at it and start the API in another shell:
     AUTH_SERVICE_BASE_URL=http://localhost:9099 python api_server.py
 
     curl localhost:8000/api/news-scrapper/deals                  # 401
-    curl -H 'Authorization: Bearer good-session' \
+    curl -H 'Authorization: good-session' \
          localhost:8000/api/news-scrapper/deals                  # 200
-    curl -H 'Authorization: Bearer good-session' \
+    curl -H 'Authorization: good-session' \
          localhost:8000/api/news-scrapper/analytics/deals/volume # 403
 
 Behaviour:
@@ -43,9 +43,8 @@ async def validate(request: Request):
     body = await request.json()
     endpoint = body.get("apiEndPoint")
 
-    header = request.headers.get("authorization", "")
-    scheme, _, rest = header.strip().partition(" ")
-    token = rest.strip() if scheme.lower() == "bearer" else header.strip()
+    # The raw session id, as company-service reads it — no scheme prefix.
+    token = request.headers.get("authorization", "").strip()
 
     if token != VALID_SESSION:
         return {"status": "401", "message": "Session not found", "data": None}
