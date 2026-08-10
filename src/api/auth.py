@@ -198,6 +198,10 @@ class AuthClient:
         if cached is not None:
             return cached
 
+        logger.info(
+            "Validating session %s...%s against %s for endpoint %s",
+            session_id[:4], session_id[-4:], self.config.validate_url, api_endpoint,
+        )
         try:
             response = self._http.post(
                 self.config.validate_url,
@@ -217,6 +221,10 @@ class AuthClient:
                 status_code=503, detail="Authentication service is unavailable"
             ) from exc
 
+        logger.info(
+            "Auth service responded HTTP %s for endpoint %s: %s",
+            response.status_code, api_endpoint, response.text[:500],
+        )
         user_session = self._parse(response, api_endpoint)
         self._cache.set(key, user_session)
         return user_session
