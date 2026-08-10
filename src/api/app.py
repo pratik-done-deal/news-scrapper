@@ -109,9 +109,9 @@ async def lifespan(app: FastAPI):
     app.state.executor = ThreadPoolExecutor(max_workers=2)
 
     app.state.scheduler_service = None
-    # The scheduler is in-process and holds no cross-process lock, so exactly
-    # one instance may run it. Extra API replicas must pass
-    # `--scheduler-enabled false` or every tick is duplicated — duplicate
+    # The scheduler is in-process and holds no cross-process lock, so it is off
+    # unless explicitly enabled and at most one instance may pass
+    # `--scheduler-enabled true`. Two that do duplicate every tick — duplicate
     # fetches, duplicate Groq spend, concurrent writes to the same Neo4j nodes.
     if config.api.scheduler_enabled:
         scheduler_agent = NewsAgent(

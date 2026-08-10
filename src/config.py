@@ -92,9 +92,9 @@ class AuthSettings:
 class ApiSettings:
     """The HTTP layer and the timers that run inside it.
 
-    The scheduler is in-process and holds no cross-process lock, so exactly one
-    instance may keep `scheduler_enabled`; every extra API replica must pass
-    `--scheduler-enabled false` or all work is duplicated.
+    The scheduler is in-process and holds no cross-process lock, so it is off
+    by default: at most one instance may pass `--scheduler-enabled true`, and
+    every other API replica must leave it off or all work is duplicated.
     """
 
     host: str = "0.0.0.0"
@@ -103,7 +103,7 @@ class ApiSettings:
     cors_allowed_origins: list[str] = field(
         default_factory=lambda: ["http://localhost:3000"]
     )
-    scheduler_enabled: bool = True
+    scheduler_enabled: bool = False
 
 
 @dataclass
@@ -246,7 +246,7 @@ OPTIONS: tuple[_Option, ...] = (
     ),
     _Option(
         "--scheduler-enabled", "api", "scheduler_enabled", boolean,
-        "Run the scrape/extraction timers in this process; false on every API replica but one",
+        "Run the scrape/extraction timers in this process; off by default, true on at most one instance",
         _BOOL_META,
     ),
     _Option("--mysql-host", "mysql", "host", str, "Company MySQL host"),

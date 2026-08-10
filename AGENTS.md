@@ -134,9 +134,9 @@ python api_server.py \
 # runs without the company DB, or pass them all to enable it.
 python api_server.py --neo4j-password <pw> --groq-api-key <key>
 
-# Extra API replicas: exactly one instance may own the timers.
+# Timers are off by default; opt exactly one instance in to own them.
 python api_server.py --neo4j-password <pw> --groq-api-key <key> \
-    --api-port 8001 --scheduler-enabled false
+    --scheduler-enabled true
 
 # Dev: autoreload, no auth, stdout logging only
 python api_server.py --neo4j-password <pw> --groq-api-key <key> \
@@ -187,20 +187,20 @@ export SESSION=90062adc6228-f   # a live Done Deal session id
 
 # Done Deal push flow — the backend registers a company, the frontend reads by id.
 # No company MySQL needed: the reference is stored on the Company node itself.
-curl -X POST localhost:8000/api/v1/news-scrapper/tracked-companies \
+curl -X POST localhost:8000/api/news-scrapper/tracked-companies \
      -H 'Content-Type: application/json' \
      -d '{"company_id":"S5124","company_name":"Meesho"}'           # 202 + backfill job_id
 curl -H "Authorization: Bearer $SESSION" \
-     'localhost:8000/api/v1/news-scrapper/tracked-companies/S5124/news'          # that company's deal feed
+     'localhost:8000/api/news-scrapper/tracked-companies/S5124/news'          # that company's deal feed
 
 # MySQL-read flow (superseded by the above; delete once Done Deal pushes)
-curl -H "Authorization: Bearer $SESSION" 'localhost:8000/api/v1/news-scrapper/entities/S5123'
-curl -H "Authorization: Bearer $SESSION" 'localhost:8000/api/v1/news-scrapper/entities/S5123/news'
-curl -H "Authorization: Bearer $SESSION" 'localhost:8000/api/v1/news-scrapper/companies/watchlist?limit=20'
-curl -X POST localhost:8000/api/v1/news-scrapper/companies/scrape/watchlist \
+curl -H "Authorization: Bearer $SESSION" 'localhost:8000/api/news-scrapper/entities/S5123'
+curl -H "Authorization: Bearer $SESSION" 'localhost:8000/api/news-scrapper/entities/S5123/news'
+curl -H "Authorization: Bearer $SESSION" 'localhost:8000/api/news-scrapper/companies/watchlist?limit=20'
+curl -X POST localhost:8000/api/news-scrapper/companies/scrape/watchlist \
      -H "Authorization: Bearer $SESSION" \
      -H 'Content-Type: application/json' -d '{"limit": 2}'
-curl -H "Authorization: Bearer $SESSION" localhost:8000/api/v1/news-scrapper/companies/scrape/<job_id>
+curl -H "Authorization: Bearer $SESSION" localhost:8000/api/news-scrapper/companies/scrape/<job_id>
 ```
 
 ## Configuration
@@ -237,7 +237,7 @@ intervals). Anything that identifies a deployment lives in `src/config.py`.
 --api-port               8000
 --api-reload             false       # dev only
 --cors-allowed-origins   http://localhost:3000    # comma-separated
---scheduler-enabled      true        # false on every API replica but one
+--scheduler-enabled      false       # true on at most one instance
 --log-level              INFO
 --log-file               news_agent.log   # "none" for stdout only
 --log-max-bytes          52428800
@@ -265,10 +265,10 @@ unchanged (401 stays 401, 403 stays 403).
 - Enforced app-wide via `dependencies=[Depends(require_session)]` in
   `src/api/app.py`, so a new router is protected without opting in.
 - The `apiEndPoint` sent is the **route template**
-  (`/api/v1/news-scrapper/deals/{deal_id}`), not the literal URL, so `user_auth` needs one
+  (`/api/news-scrapper/deals/{deal_id}`), not the literal URL, so `user_auth` needs one
   row per endpoint rather than one per company id.
 - Public endpoints are listed in `auth.EXEMPT_ROUTES`: `GET /health` (probes
-  carry no token) and `POST /api/v1/news-scrapper/tracked-companies` (Done Deal's backend
+  carry no token) and `POST /api/news-scrapper/tracked-companies` (Done Deal's backend
   pushes companies service-to-service). Swagger and `/openapi.json` are open too.
 - Verdicts are cached for `--auth-cache-ttl-seconds` per (session, endpoint).
   Successes only — a revoked session keeps working for at most one TTL, while a
@@ -283,8 +283,9 @@ process starts from any working directory. Logging is configured in one place
 (`src/logging_config.py`) for every entry point; scrape workers log to stdout
 only, since concurrent rotation of one file across processes loses records.
 
-The scheduler is in-process with no cross-process lock: run **one** instance
-with `--scheduler-enabled true` and never more than one uvicorn worker on it.
+The scheduler is in-process with no cross-process lock, so it is **off by
+default**. To run the timers at all, pass `--scheduler-enabled true` on exactly
+**one** instance, and never more than one uvicorn worker on it.
 
 ## Tests
 

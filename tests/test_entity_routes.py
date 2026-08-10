@@ -37,7 +37,7 @@ DEAL_ROW = {
 
 def build_client(rows):
     app = FastAPI()
-    app.include_router(entities.router, prefix="/api/v1/news-scrapper")
+    app.include_router(entities.router, prefix="/api/news-scrapper")
     dao, _ = make_dao(rows=rows)
     app.dependency_overrides[get_mysql_dao] = lambda: dao
     app.dependency_overrides[get_connection] = lambda: object()
@@ -53,7 +53,7 @@ def test_news_feed_is_looked_up_by_the_resolved_name():
         "src.api.routes.entities.queries.search_articles_by_company_name",
         return_value=(1, [DEAL_ROW]),
     ) as search:
-        response = client.get("/api/v1/news-scrapper/entities/S5123/news")
+        response = client.get("/api/news-scrapper/entities/S5123/news")
 
     assert response.status_code == 200
     assert search.call_args.args[1] == "Delhivery"
@@ -74,7 +74,7 @@ def test_paging_and_filters_reach_the_query():
         return_value=(0, []),
     ) as search:
         response = client.get(
-            "/api/v1/news-scrapper/entities/S5123/news",
+            "/api/news-scrapper/entities/S5123/news",
             params={"page": 3, "page_size": 10, "bookmarked": "true"},
         )
 
@@ -93,7 +93,7 @@ def test_a_company_with_no_deals_returns_an_empty_feed_not_an_error():
         "src.api.routes.entities.queries.search_articles_by_company_name",
         return_value=(0, []),
     ):
-        response = client.get("/api/v1/news-scrapper/entities/S5123/news")
+        response = client.get("/api/news-scrapper/entities/S5123/news")
 
     assert response.status_code == 200
     assert response.json()["items"] == []
@@ -103,7 +103,7 @@ def test_a_company_with_no_deals_returns_an_empty_feed_not_an_error():
 def test_untracked_entity_is_a_404():
     client = build_client([])
 
-    response = client.get("/api/v1/news-scrapper/entities/S9999/news")
+    response = client.get("/api/news-scrapper/entities/S9999/news")
 
     assert response.status_code == 404
 
@@ -112,7 +112,7 @@ def test_untracked_entity_is_a_404():
 def test_malformed_reference_is_a_400(ref):
     client = build_client([SELLER_ROW])
 
-    response = client.get(f"/api/v1/news-scrapper/entities/{ref}/news")
+    response = client.get(f"/api/news-scrapper/entities/{ref}/news")
 
     assert response.status_code == 400
 
@@ -120,7 +120,7 @@ def test_malformed_reference_is_a_400(ref):
 def test_entity_lookup_without_fetching_news():
     client = build_client([SELLER_ROW])
 
-    response = client.get("/api/v1/news-scrapper/entities/S5123")
+    response = client.get("/api/news-scrapper/entities/S5123")
 
     assert response.status_code == 200
     assert response.json() == {

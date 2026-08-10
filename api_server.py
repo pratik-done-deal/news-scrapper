@@ -1,9 +1,10 @@
 """Uvicorn entry point for the API.
 
-Single process on purpose: `src/api/app.py` starts an in-process APScheduler,
-so a second worker duplicates every scrape and extraction tick. To scale the
-HTTP layer, run additional instances with `--scheduler-enabled false` rather
-than raising the worker count here.
+The in-process APScheduler in `src/api/app.py` is off by default, so this
+serves HTTP only unless `--scheduler-enabled true` is passed. Pass it on at
+most one instance and give that instance a single worker — a second worker
+duplicates every scrape and extraction tick. Scale the HTTP layer with extra
+instances that leave the scheduler off, not by raising the worker count here.
 
 Configuration defaults live in `src/config.py`; every one of them can be
 overridden on this command line (`--help` lists them). The resolved config is
