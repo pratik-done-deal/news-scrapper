@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 def fetch_unprocessed(driver, database: str, limit: int | None) -> list[dict]:
     cypher = """
-        MATCH (a:Article)
+        MATCH (a:NewsArticle)
         WHERE a.is_ma_relevant = true AND a.is_processed = false
         RETURN a.id AS id, a.title AS title, a.content AS content
         ORDER BY a.scraped_at ASC
@@ -50,7 +50,7 @@ def fetch_unprocessed(driver, database: str, limit: int | None) -> list[dict]:
 def mark_processed(driver, database: str, article_id: str) -> None:
     with driver.session(database=database) as session:
         session.run(
-            "MATCH (a:Article {id: $id}) SET a.is_processed = true",
+            "MATCH (a:NewsArticle {id: $id}) SET a.is_processed = true",
             id=article_id,
         )
 

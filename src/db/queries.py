@@ -105,12 +105,12 @@ def list_articles(
 
     with conn.session() as session:
         total = session.run(
-            f"MATCH (a:Article) {where} RETURN count(a) AS total", **params
+            f"MATCH (a:NewsArticle) {where} RETURN count(a) AS total", **params
         ).single()["total"]
 
         result = session.run(
             f"""
-            MATCH (a:Article)
+            MATCH (a:NewsArticle)
             {where}
             RETURN a
             ORDER BY a.published_at DESC
@@ -128,7 +128,7 @@ def list_articles(
 def get_article(conn: Neo4jConnection, article_id: UUID) -> Optional[dict]:
     with conn.session() as session:
         record = session.run(
-            "MATCH (a:Article {id: $id}) RETURN a", id=str(article_id)
+            "MATCH (a:NewsArticle {id: $id}) RETURN a", id=str(article_id)
         ).single()
         return dict(record["a"]) if record else None
 
@@ -172,8 +172,8 @@ def search_articles_by_company_name(
     where = "WHERE " + " AND ".join(conditions)
 
     match_clause = (
-        f"MATCH (c:Company)-[:{COMPANY_DEAL_RELS}]->(d:Deal)"
-        "<-[:HAS_DEAL]-(art:Article)"
+        f"MATCH (c:NewsCompany)-[:{COMPANY_DEAL_RELS}]->(d:NewsDeal)"
+        "<-[:HAS_DEAL]-(art:NewsArticle)"
     )
 
     with conn.session() as session:
@@ -204,7 +204,7 @@ def get_registered_company(conn: Neo4jConnection, external_id: str) -> Optional[
     with conn.session() as session:
         record = session.run(
             """
-            MATCH (c:Company {external_id: $external_id})
+            MATCH (c:NewsCompany {external_id: $external_id})
             RETURN c.id AS id, c.name AS name, c.external_id AS external_id,
                    c.external_name AS external_name, c.linked_at AS linked_at
             """,
@@ -263,12 +263,12 @@ def get_news_by_external_id(
     # Anchor on the registered node, then collect its deals by both routes
     # before filtering, so the date/bookmark predicates apply to the union.
     match_clause = f"""
-        MATCH (c:Company {{external_id: $external_id}})
+        MATCH (c:NewsCompany {{external_id: $external_id}})
         CALL (c) {{
-            MATCH (c)-[:{COMPANY_DEAL_RELS}]->(d:Deal)<-[:HAS_DEAL]-(art:Article)
+            MATCH (c)-[:{COMPANY_DEAL_RELS}]->(d:NewsDeal)<-[:HAS_DEAL]-(art:NewsArticle)
             RETURN d, art
           UNION
-            MATCH (art:Article)-[:HAS_DEAL]->(d:Deal)
+            MATCH (art:NewsArticle)-[:HAS_DEAL]->(d:NewsDeal)
             WHERE art.searched_company IS NOT NULL
               AND toLower(art.searched_company) = toLower(c.name)
             RETURN d, art
@@ -331,7 +331,7 @@ def list_deals(
     with conn.session() as session:
         total = session.run(
             f"""
-            MATCH (art:Article)-[:HAS_DEAL]->(d:Deal)
+            MATCH (art:NewsArticle)-[:HAS_DEAL]->(d:NewsDeal)
             {where}
             RETURN count(d) AS total
             """,
@@ -340,7 +340,7 @@ def list_deals(
 
         result = session.run(
             f"""
-            MATCH (art:Article)-[:HAS_DEAL]->(d:Deal)
+            MATCH (art:NewsArticle)-[:HAS_DEAL]->(d:NewsDeal)
             {where}
             RETURN d, art.id AS article_id, art AS article
             ORDER BY art.published_at DESC
@@ -359,8 +359,8 @@ def get_deal(conn: Neo4jConnection, deal_id: UUID) -> Optional[dict]:
     with conn.session() as session:
         record = session.run(
             """
-            MATCH (art:Article)-[:HAS_DEAL]->(d:Deal {id: $id})
-            OPTIONAL MATCH (c:Company)-[r]->(d)
+            MATCH (art:NewsArticle)-[:HAS_DEAL]->(d:NewsDeal {id: $id})
+            OPTIONAL MATCH (c:NewsCompany)-[r]->(d)
             RETURN d, art.id AS article_id,
                    collect(CASE WHEN c IS NOT NULL
                            THEN {id: c.id, name: c.name, role: type(r)}
@@ -382,7 +382,7 @@ def set_deal_bookmark(
     with conn.session() as session:
         record = session.run(
             """
-            MATCH (art:Article)-[:HAS_DEAL]->(d:Deal {id: $id})
+            MATCH (art:NewsArticle)-[:HAS_DEAL]->(d:NewsDeal {id: $id})
             SET d.is_bookmarked = $bookmarked
             RETURN d, art.id AS article_id, art AS article
             """,
@@ -395,7 +395,7 @@ def set_deal_bookmark(
 def get_company(conn: Neo4jConnection, company_id: UUID) -> Optional[dict]:
     with conn.session() as session:
         record = session.run(
-            "MATCH (c:Company {id: $id}) RETURN c", id=str(company_id)
+            "MATCH (c:NewsCompany {id: $id}) RETURN c", id=str(company_id)
         ).single()
         return dict(record["c"]) if record else None
 
@@ -409,7 +409,7 @@ def get_deals_by_company_name(
     with conn.session() as session:
         total = session.run(
             """
-            MATCH (c:Company)-[]->(d:Deal)
+            MATCH (c:NewsCompany)-[]->(d:NewsDeal)
             WHERE toLower(c.name) CONTAINS toLower($name)
             RETURN count(DISTINCT d) AS total
             """,
@@ -418,12 +418,12 @@ def get_deals_by_company_name(
 
         result = session.run(
             """
-            MATCH (c:Company)-[]->(d:Deal)<-[:HAS_DEAL]-(art:Article)
+            MATCH (c:NewsCompany)-[]->(d:NewsDeal)<-[:HAS_DEAL]-(art:NewsArticle)
             WHERE toLower(c.name) CONTAINS toLower($name)
             WITH DISTINCT d, art
             ORDER BY d.extracted_at DESC
             SKIP $offset LIMIT $limit
-            OPTIONAL MATCH (co:Company)-[r]->(d)
+            OPTIONAL MATCH (co:NewsCompany)-[r]->(d)
             RETURN d, art.id AS article_id, art AS article,
                    collect(CASE WHEN co IS NOT NULL
                            THEN {id: co.id, name: co.name, role: type(r)}
@@ -447,7 +447,7 @@ def get_deals_by_company(
     with conn.session() as session:
         total = session.run(
             """
-            MATCH (c:Company {id: $company_id})-[]->(d:Deal)
+            MATCH (c:NewsCompany {id: $company_id})-[]->(d:NewsDeal)
             RETURN count(d) AS total
             """,
             company_id=str(company_id),
@@ -455,11 +455,11 @@ def get_deals_by_company(
 
         result = session.run(
             """
-            MATCH (c:Company {id: $company_id})-[]->(d:Deal)<-[:HAS_DEAL]-(art:Article)
+            MATCH (c:NewsCompany {id: $company_id})-[]->(d:NewsDeal)<-[:HAS_DEAL]-(art:NewsArticle)
             WITH d, art
             ORDER BY d.extracted_at DESC
             SKIP $offset LIMIT $limit
-            OPTIONAL MATCH (co:Company)-[r]->(d)
+            OPTIONAL MATCH (co:NewsCompany)-[r]->(d)
             RETURN d, art.id AS article_id, art AS article,
                    collect(CASE WHEN co IS NOT NULL
                            THEN {id: co.id, name: co.name, role: type(r)}
@@ -491,7 +491,7 @@ def get_company_signal_context(
 
     with conn.session() as session:
         company_record = session.run(
-            "MATCH (c:Company {id: $id}) RETURN c",
+            "MATCH (c:NewsCompany {id: $id}) RETURN c",
             id=str(company_id),
         ).single()
         if not company_record:
@@ -500,10 +500,10 @@ def get_company_signal_context(
         company = dict(company_record["c"])
         articles_result = session.run(
             """
-            MATCH (c:Company {id: $company_id})
-            OPTIONAL MATCH (c)-[]->(:Deal)<-[:HAS_DEAL]-(dealArticle:Article)
+            MATCH (c:NewsCompany {id: $company_id})
+            OPTIONAL MATCH (c)-[]->(:NewsDeal)<-[:HAS_DEAL]-(dealArticle:NewsArticle)
             WITH c, collect(DISTINCT dealArticle) AS dealArticles
-            MATCH (a:Article)
+            MATCH (a:NewsArticle)
             WHERE coalesce(a.published_at, a.scraped_at) >= $cutoff
               AND (
                 toLower(coalesce(a.title, "")) CONTAINS toLower(c.name)
@@ -522,7 +522,7 @@ def get_company_signal_context(
 
         deals_result = session.run(
             """
-            MATCH (c:Company {id: $company_id})-[r]->(d:Deal)<-[:HAS_DEAL]-(a:Article)
+            MATCH (c:NewsCompany {id: $company_id})-[r]->(d:NewsDeal)<-[:HAS_DEAL]-(a:NewsArticle)
             RETURN type(r) AS role,
                    d.deal_type AS deal_type,
                    d.summary AS summary,
@@ -560,8 +560,8 @@ def save_company_signal_snapshot(
     with conn.session() as session:
         record = session.run(
             """
-            MATCH (c:Company {id: $company_id})
-            CREATE (s:CompanySignal {
+            MATCH (c:NewsCompany {id: $company_id})
+            CREATE (s:NewsCompanySignal {
                 id: $id,
                 company_id: $company_id,
                 company_name: $company_name,
@@ -597,7 +597,7 @@ def get_latest_company_signal(
     with conn.session() as session:
         record = session.run(
             """
-            MATCH (:Company {id: $company_id})-[:HAS_SIGNAL]->(s:CompanySignal)
+            MATCH (:NewsCompany {id: $company_id})-[:HAS_SIGNAL]->(s:NewsCompanySignal)
             RETURN s
             ORDER BY s.generated_at DESC
             LIMIT 1
@@ -615,7 +615,7 @@ def analytics_deals_by_sector(conn: Neo4jConnection) -> list[dict]:
     with conn.session() as session:
         result = session.run(
             """
-            MATCH (d:Deal)
+            MATCH (d:NewsDeal)
             WHERE d.sector IS NOT NULL
             RETURN d.sector AS sector, count(d) AS deal_count
             ORDER BY deal_count DESC
@@ -634,7 +634,7 @@ def analytics_top_buyers(
     with conn.session() as session:
         result = session.run(
             f"""
-            MATCH (c:Company)-[:{rel_type}]->(d:Deal)
+            MATCH (c:NewsCompany)-[:{rel_type}]->(d:NewsDeal)
             RETURN c.id AS company_id, c.name AS company_name, count(d) AS deal_count
             ORDER BY deal_count DESC
             LIMIT $limit
@@ -671,7 +671,7 @@ def analytics_deal_volume(
     with conn.session() as session:
         result = session.run(
             f"""
-            MATCH (a:Article)-[:HAS_DEAL]->(d:Deal)
+            MATCH (a:NewsArticle)-[:HAS_DEAL]->(d:NewsDeal)
             {where}
             RETURN substring(a.published_at, 0, $trunc_len) AS period, count(d) AS deal_count
             ORDER BY period ASC

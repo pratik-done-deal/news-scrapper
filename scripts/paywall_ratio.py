@@ -74,9 +74,9 @@ def main() -> None:
     database = config.neo4j.database
 
     driver = GraphDatabase.driver(uri, auth=(user, password))
-    cypher = "MATCH (a:Article) RETURN a.source AS source, a.title AS title, a.content AS content"
+    cypher = "MATCH (a:NewsArticle) RETURN a.source AS source, a.title AS title, a.content AS content"
     if args.source:
-        cypher = ("MATCH (a:Article) WHERE a.source = $source "
+        cypher = ("MATCH (a:NewsArticle) WHERE a.source = $source "
                   "RETURN a.source AS source, a.title AS title, a.content AS content")
 
     # per-source tallies: {source: [free, paid]}

@@ -107,7 +107,7 @@ class NewsRepository:
             # Release the ref from any other node before claiming it.
             session.run(
                 """
-                MATCH (old:Company {external_id: $external_id})
+                MATCH (old:NewsCompany {external_id: $external_id})
                 WHERE old.name <> $name
                 REMOVE old.external_id, old.external_name
                 """,
@@ -116,7 +116,7 @@ class NewsRepository:
             )
             record = session.run(
                 """
-                MERGE (c:Company {name: $name})
+                MERGE (c:NewsCompany {name: $name})
                 ON CREATE SET c.id = $company_id, c._created = true
                 SET c.external_id   = $external_id,
                     c.external_name = $external_name,
@@ -124,7 +124,7 @@ class NewsRepository:
                 WITH c, coalesce(c._created, false) AS created
                 REMOVE c._created
                 WITH c, created
-                OPTIONAL MATCH (c)-[r]->(:Deal)
+                OPTIONAL MATCH (c)-[r]->(:NewsDeal)
                 RETURN c.id AS id, c.name AS name, c.external_id AS external_id,
                        c.external_name AS external_name, c.linked_at AS linked_at,
                        created, count(r) AS deal_count
@@ -157,7 +157,7 @@ class NewsRepository:
         url_hash = self._hash_url(url)
         with self._session() as session:
             result = session.run(
-                "MATCH (a:Article {url_hash: $url_hash}) RETURN a.id LIMIT 1",
+                "MATCH (a:NewsArticle {url_hash: $url_hash}) RETURN a.id LIMIT 1",
                 url_hash=url_hash,
             )
             return result.single() is not None
@@ -177,7 +177,7 @@ class NewsRepository:
         with self._session() as session:
             session.run(
                 """
-                CREATE (a:Article {
+                CREATE (a:NewsArticle {
                     id:           $id,
                     url:          $url,
                     url_hash:     $url_hash,
@@ -233,7 +233,7 @@ class NewsRepository:
 
         with self._session() as session:
             existing = session.run(
-                "UNWIND $hashes AS h MATCH (a:Article {url_hash: h}) RETURN a.url_hash AS h",
+                "UNWIND $hashes AS h MATCH (a:NewsArticle {url_hash: h}) RETURN a.url_hash AS h",
                 hashes=[row["url_hash"] for row in rows],
             )
             existing_hashes = {record["h"] for record in existing}
@@ -245,7 +245,7 @@ class NewsRepository:
             session.run(
                 """
                 UNWIND $rows AS row
-                CREATE (a:Article {
+                CREATE (a:NewsArticle {
                     id:           row.id,
                     url:          row.url,
                     url_hash:     row.url_hash,
@@ -280,7 +280,7 @@ class NewsRepository:
         the shape matches what freshly-scraped article dicts already use —
         callers run the same filter/extraction code against either.
         """
-        query = "MATCH (a:Article) WHERE a.is_ma_funding_relevant IS NULL RETURN a ORDER BY a.scraped_at ASC"
+        query = "MATCH (a:NewsArticle) WHERE a.is_ma_funding_relevant IS NULL RETURN a ORDER BY a.scraped_at ASC"
         params: dict = {}
         if limit is not None:
             query += " LIMIT $limit"
@@ -298,7 +298,7 @@ class NewsRepository:
     def mark_ma_funding_relevant(self, article_id, is_relevant: bool) -> None:
         with self._session() as session:
             session.run(
-                "MATCH (a:Article {id: $id}) SET a.is_ma_funding_relevant = $rel",
+                "MATCH (a:NewsArticle {id: $id}) SET a.is_ma_funding_relevant = $rel",
                 id=str(article_id),
                 rel=is_relevant,
             )
@@ -317,11 +317,11 @@ class NewsRepository:
         with self._session() as session:
             result = session.run(
                 f"""
-                MATCH (a:Article)-[:HAS_DEAL]->(d:Deal)
+                MATCH (a:NewsArticle)-[:HAS_DEAL]->(d:NewsDeal)
                 WHERE a.is_processed = true
                   AND a.duplicate_of IS NULL
                   AND a.scraped_at >= $cutoff
-                OPTIONAL MATCH (co:Company)-[:{COMPANY_DEAL_RELS}]->(d)
+                OPTIONAL MATCH (co:NewsCompany)-[:{COMPANY_DEAL_RELS}]->(d)
                 RETURN a.id AS id, a.title AS title, a.content AS content,
                        d.id AS deal_id, d.deal_value AS deal_value,
                        [name IN collect(DISTINCT co.name) WHERE name IS NOT NULL] AS parties
@@ -340,8 +340,8 @@ class NewsRepository:
         with self._session() as session:
             session.run(
                 """
-                MATCH (a:Article {id: $article_id})
-                MATCH (c:Article {id: $canonical_id})
+                MATCH (a:NewsArticle {id: $article_id})
+                MATCH (c:NewsArticle {id: $canonical_id})
                 SET a.is_processed = true,
                     a.is_ma_funding_relevant = $is_relevant,
                     a.duplicate_of = $canonical_id
@@ -377,8 +377,8 @@ class NewsRepository:
             # inserting a duplicate.
             record = session.run(
                 """
-                MATCH (a:Article {id: $article_id})
-                MERGE (d:Deal {article_id: $article_id})
+                MATCH (a:NewsArticle {id: $article_id})
+                MERGE (d:NewsDeal {article_id: $article_id})
                 ON CREATE SET
                     d.id           = $new_deal_id,
                     d.deal_value   = $deal_value,
@@ -424,10 +424,10 @@ class NewsRepository:
                         continue
                     session.run(
                         f"""
-                        MERGE (c:Company {{name: $name}})
+                        MERGE (c:NewsCompany {{name: $name}})
                         ON CREATE SET c.id = $company_id
                         WITH c
-                        MATCH (d:Deal {{id: $deal_id}})
+                        MATCH (d:NewsDeal {{id: $deal_id}})
                         MERGE (c)-[:{rel}]->(d)
                         """,
                         name=canonical,

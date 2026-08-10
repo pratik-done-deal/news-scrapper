@@ -32,7 +32,7 @@ def _links(session):
     out = []
     for call in session.run.call_args_list:
         query = call.args[0]
-        if "MERGE (c:Company" not in query:
+        if "MERGE (c:NewsCompany" not in query:
             continue
         rel = query.split("MERGE (c)-[:")[1].split("]")[0]
         out.append((rel, call.kwargs["name"]))

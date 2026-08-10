@@ -45,7 +45,7 @@ def main() -> None:
         # Fetch article content
         with driver.session(database=neo4j_database) as session:
             record = session.run(
-                "MATCH (a:Article {id: $id}) RETURN a.title AS title, a.content AS content",
+                "MATCH (a:NewsArticle {id: $id}) RETURN a.title AS title, a.content AS content",
                 id=article_id,
             ).single()
 
@@ -76,7 +76,7 @@ def main() -> None:
         # Delete existing Deal node(s) for this article (DETACH removes all relationships)
         with driver.session(database=neo4j_database) as session:
             session.run(
-                "MATCH (a:Article {id: $id})-[:HAS_DEAL]->(d:Deal) DETACH DELETE d",
+                "MATCH (a:NewsArticle {id: $id})-[:HAS_DEAL]->(d:NewsDeal) DETACH DELETE d",
                 id=article_id,
             )
 

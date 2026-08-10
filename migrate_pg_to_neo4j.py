@@ -80,7 +80,7 @@ def _migrate_articles(cur, neo4j_session, batch_size: int) -> int:
         neo4j_session.run(
             """
             UNWIND $rows AS row
-            MERGE (a:Article {id: row.id})
+            MERGE (a:NewsArticle {id: row.id})
             SET a.url            = row.url,
                 a.url_hash       = row.url_hash,
                 a.source         = row.source,
@@ -125,7 +125,7 @@ def _migrate_deals(cur, neo4j_session, batch_size: int) -> int:
         neo4j_session.run(
             """
             UNWIND $rows AS row
-            MERGE (d:Deal {id: row.id})
+            MERGE (d:NewsDeal {id: row.id})
             SET d.deal_value   = row.deal_value,
                 d.sector       = row.sector,
                 d.sub_sector   = row.sub_sector,
@@ -134,7 +134,7 @@ def _migrate_deals(cur, neo4j_session, batch_size: int) -> int:
                 d.summary      = row.summary,
                 d.extracted_at = row.extracted_at
             WITH d, row
-            MATCH (a:Article {id: row.article_id})
+            MATCH (a:NewsArticle {id: row.article_id})
             MERGE (a)-[:HAS_DEAL]->(d)
             """,
             rows=batch,
@@ -191,10 +191,10 @@ def _write_company_rel_batch(neo4j_session, rel_type: str, batch: list[dict]) ->
     neo4j_session.run(
         f"""
         UNWIND $rows AS row
-        MERGE (c:Company {{name: row.company_name}})
+        MERGE (c:NewsCompany {{name: row.company_name}})
         ON CREATE SET c.id = row.company_id
         WITH c, row
-        MATCH (d:Deal {{id: row.deal_id}})
+        MATCH (d:NewsDeal {{id: row.deal_id}})
         MERGE (c)-[:{rel_type}]->(d)
         """,
         rows=batch,

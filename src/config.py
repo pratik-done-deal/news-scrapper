@@ -103,7 +103,7 @@ class ApiSettings:
     cors_allowed_origins: list[str] = field(
         default_factory=lambda: ["http://localhost:3000"]
     )
-    scheduler_enabled: bool = False
+    scheduler_enabled: bool = True
 
 
 @dataclass

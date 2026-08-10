@@ -58,7 +58,7 @@ def test_node_is_keyed_by_the_normalised_name(repo):
     that same node or the deals attach to an unstamped duplicate."""
     repo.register_company("S5122", "Zoho Corporation Private Limited")
 
-    merge = [c for c in repo._mock_session.run.call_args_list if "MERGE (c:Company" in c.args[0]]
+    merge = [c for c in repo._mock_session.run.call_args_list if "MERGE (c:NewsCompany" in c.args[0]]
     assert len(merge) == 1
     assert merge[0].kwargs["name"] == "Zoho"
     assert merge[0].kwargs["external_id"] == "S5122"
@@ -75,7 +75,7 @@ def test_reference_is_released_from_any_previous_node(repo):
     assert any("REMOVE old.external_id" in q for q in queries)
     # and it must run before the MERGE claims it
     assert next(i for i, q in enumerate(queries) if "REMOVE old.external_id" in q) < next(
-        i for i, q in enumerate(queries) if "MERGE (c:Company" in q
+        i for i, q in enumerate(queries) if "MERGE (c:NewsCompany" in q
     )
 
 
@@ -87,7 +87,7 @@ def test_brand_name_decides_the_node_when_it_differs_from_the_registered_name(re
         "S5124", "Fashnear Technologies Private Limited", brand_name="Meesho"
     )
 
-    merge = [c for c in repo._mock_session.run.call_args_list if "MERGE (c:Company" in c.args[0]]
+    merge = [c for c in repo._mock_session.run.call_args_list if "MERGE (c:NewsCompany" in c.args[0]]
     assert merge[0].kwargs["name"] == "Meesho"
     # The registered name is still kept, for provenance.
     assert merge[0].kwargs["external_name"] == "Fashnear Technologies Private Limited"
@@ -96,7 +96,7 @@ def test_brand_name_decides_the_node_when_it_differs_from_the_registered_name(re
 def test_registered_name_is_used_when_no_brand_is_given(repo):
     repo.register_company("S5123", "Delhivery Limited")
 
-    merge = [c for c in repo._mock_session.run.call_args_list if "MERGE (c:Company" in c.args[0]]
+    merge = [c for c in repo._mock_session.run.call_args_list if "MERGE (c:NewsCompany" in c.args[0]]
     assert merge[0].kwargs["name"] == "Delhivery"
 
 

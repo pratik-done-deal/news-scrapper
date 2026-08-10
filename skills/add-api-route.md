@@ -10,7 +10,7 @@ When you need to expose new data or queries through the REST API.
 def get_my_data(conn: Neo4jConnection, param: str) -> list[dict]:
     with conn.session() as session:
         result = session.run(
-            "MATCH (n:Deal {sector: $sector}) RETURN n",
+            "MATCH (n:NewsDeal {sector: $sector}) RETURN n",
             sector=param,
         )
         return [record["n"] for record in result]
