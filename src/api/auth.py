@@ -328,7 +328,7 @@ def extract_session_id(request: Request) -> Optional[str]:
 
 def api_endpoint_for(request: Request) -> str:
     """The route template this request matched, e.g.
-    `/api/news-scrapper/deals/{deal_id}`.
+    `/api/v1/news/deals/{deal_id}`.
 
     Falls back to the literal path only if routing left no route on the scope,
     which should not happen for a matched request.
