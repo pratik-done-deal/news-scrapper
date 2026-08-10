@@ -14,11 +14,11 @@ Usage:
 Then point the API at it and start the API in another shell:
     AUTH_SERVICE_BASE_URL=http://localhost:9099 python api_server.py
 
-    curl localhost:8000/api/news-scrapper/deals                  # 401
+    curl localhost:8000/api/v1/news/deals                  # 401
     curl -H 'Authorization: good-session' \
-         localhost:8000/api/news-scrapper/deals                  # 200
+         localhost:8000/api/v1/news/deals                  # 200
     curl -H 'Authorization: good-session' \
-         localhost:8000/api/news-scrapper/analytics/deals/volume # 403
+         localhost:8000/api/v1/news/analytics/deals/volume # 403
 
 Behaviour:
     session "good-session"  -> valid, on every endpoint except those in
@@ -35,7 +35,7 @@ VALID_SESSION = "good-session"
 
 # One endpoint refuses, so the "role not allowed" branch can be exercised
 # without editing anything on the company-service side.
-FORBIDDEN_ENDPOINTS = {"/api/news-scrapper/analytics/deals/volume"}
+FORBIDDEN_ENDPOINTS = {"/api/v1/news/analytics/deals/volume"}
 
 
 @app.post("/api/company-service/v1/internal/token/validate")
