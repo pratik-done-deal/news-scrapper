@@ -187,20 +187,20 @@ export SESSION=90062adc6228-f   # a live Done Deal session id
 
 # Done Deal push flow — the backend registers a company, the frontend reads by id.
 # No company MySQL needed: the reference is stored on the Company node itself.
-curl -X POST localhost:8000/api/v1/news/tracked-companies \
+curl -X POST localhost:8000/api/news/tracked-companies \
      -H 'Content-Type: application/json' \
      -d '{"company_id":"S5124","company_name":"Meesho"}'           # 202 + backfill job_id
 curl -H "Authorization: $SESSION" \
-     'localhost:8000/api/v1/news/tracked-companies/S5124/news'          # that company's deal feed
+     'localhost:8000/api/news/tracked-companies/S5124/news'          # that company's deal feed
 
 # MySQL-read flow (superseded by the above; delete once Done Deal pushes)
-curl -H "Authorization: $SESSION" 'localhost:8000/api/v1/news/entities/S5123'
-curl -H "Authorization: $SESSION" 'localhost:8000/api/v1/news/entities/S5123/news'
-curl -H "Authorization: $SESSION" 'localhost:8000/api/v1/news/companies/watchlist?limit=20'
-curl -X POST localhost:8000/api/v1/news/companies/scrape/watchlist \
+curl -H "Authorization: $SESSION" 'localhost:8000/api/news/entities/S5123'
+curl -H "Authorization: $SESSION" 'localhost:8000/api/news/entities/S5123/news'
+curl -H "Authorization: $SESSION" 'localhost:8000/api/news/companies/watchlist?limit=20'
+curl -X POST localhost:8000/api/news/companies/scrape/watchlist \
      -H "Authorization: $SESSION" \
      -H 'Content-Type: application/json' -d '{"limit": 2}'
-curl -H "Authorization: $SESSION" localhost:8000/api/v1/news/companies/scrape/<job_id>
+curl -H "Authorization: $SESSION" localhost:8000/api/news/companies/scrape/<job_id>
 ```
 
 ## Configuration
@@ -267,10 +267,10 @@ unchanged (401 stays 401, 403 stays 403).
 - Enforced app-wide via `dependencies=[Depends(require_session)]` in
   `src/api/app.py`, so a new router is protected without opting in.
 - The `apiEndPoint` sent is the **route template**
-  (`/api/v1/news/deals/{deal_id}`), not the literal URL, so `user_auth` needs one
+  (`/api/news/deals/{deal_id}`), not the literal URL, so `user_auth` needs one
   row per endpoint rather than one per company id.
 - Public endpoints are listed in `auth.EXEMPT_ROUTES`: `GET /health` (probes
-  carry no token) and `POST /api/v1/news/tracked-companies` (Done Deal's backend
+  carry no token) and `POST /api/news/tracked-companies` (Done Deal's backend
   pushes companies service-to-service). Swagger and `/openapi.json` are open too.
 - Verdicts are cached for `--auth-cache-ttl-seconds` per (session, endpoint).
   Successes only — a revoked session keeps working for at most one TTL, while a

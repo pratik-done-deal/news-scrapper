@@ -50,7 +50,7 @@ runs — there is nothing to add.
 Two things to know:
 
 - The `apiEndPoint` sent for authorization is the **route template**, e.g.
-  `/api/v1/news/deals/{deal_id}`. A new endpoint needs a matching `user_auth` row on
+  `/api/news/deals/{deal_id}`. A new endpoint needs a matching `user_auth` row on
   the company-service side, or every call to it comes back 401/403.
 - To make a route public, add `(METHOD, "/full/route/template")` to
   `EXEMPT_ROUTES` in `src/api/auth.py`. That list is the only way out, on

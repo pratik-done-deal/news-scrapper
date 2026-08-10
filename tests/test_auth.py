@@ -73,9 +73,9 @@ def test_the_endpoint_being_called_is_sent_not_the_validate_endpoint():
     own path would authorize the wrong thing on every request."""
     client, http = build_auth_client()
 
-    client.validate("sess-1", "/api/v1/news/deals/{deal_id}")
+    client.validate("sess-1", "/api/news/deals/{deal_id}")
 
-    assert http.post.call_args.kwargs["json"] == {"apiEndPoint": "/api/v1/news/deals/{deal_id}"}
+    assert http.post.call_args.kwargs["json"] == {"apiEndPoint": "/api/news/deals/{deal_id}"}
     assert http.post.call_args.args[0] == (
         "https://qa.done.deals/api/company-service/v1/internal/token/validate"
     )
@@ -86,7 +86,7 @@ def test_the_session_id_travels_raw_with_no_scheme_prefix():
     `Bearer ` prefix would make every call fail."""
     client, http = build_auth_client()
 
-    client.validate("sess-1", "/api/v1/news/deals")
+    client.validate("sess-1", "/api/news/deals")
 
     assert http.post.call_args.kwargs["headers"]["Authorization"] == "sess-1"
 
@@ -116,7 +116,7 @@ def test_the_session_id_is_read_verbatim_without_stripping_a_prefix(header, expe
 def test_a_valid_session_is_parsed_into_its_fields():
     client, _ = build_auth_client()
 
-    session = client.validate("sess-1", "/api/v1/news/deals")
+    session = client.validate("sess-1", "/api/news/deals")
 
     assert session.profile_id == "444a4f41-d57b-4008-ae15-be7d4910ddc4"
     assert session.user_type == 2
@@ -130,7 +130,7 @@ def test_unknown_fields_from_company_service_survive():
     body = {**VALID_BODY, "data": {**VALID_BODY["data"], "newThing": "keep me"}}
     client, _ = build_auth_client(fake_response(body=body))
 
-    session = client.validate("sess-1", "/api/v1/news/deals")
+    session = client.validate("sess-1", "/api/news/deals")
 
     assert session.model_dump()["newThing"] == "keep me"
 
@@ -142,7 +142,7 @@ def test_their_verdict_is_passed_through_unchanged(status):
     )
 
     with pytest.raises(Exception) as exc:
-        client.validate("sess-1", "/api/v1/news/deals")
+        client.validate("sess-1", "/api/news/deals")
 
     assert exc.value.status_code == status
     assert exc.value.detail == "Nope"
@@ -163,7 +163,7 @@ def test_the_specific_refusal_message_is_surfaced_not_the_generic_one():
     )
 
     with pytest.raises(Exception) as exc:
-        client.validate("sess-1", "/api/v1/news/deals")
+        client.validate("sess-1", "/api/news/deals")
 
     assert exc.value.detail == "User not authenticated"
 
@@ -172,7 +172,7 @@ def test_a_refusal_with_no_message_at_all_still_says_something_useful():
     client, _ = build_auth_client(fake_response(status_code=403, body={"status": "403"}))
 
     with pytest.raises(Exception) as exc:
-        client.validate("sess-1", "/api/v1/news/deals")
+        client.validate("sess-1", "/api/news/deals")
 
     assert exc.value.detail == "Not authorised for this endpoint"
 
@@ -186,7 +186,7 @@ def test_a_refusal_carried_in_the_envelope_still_refuses(status):
     )
 
     with pytest.raises(Exception) as exc:
-        client.validate("sess-1", "/api/v1/news/deals")
+        client.validate("sess-1", "/api/news/deals")
 
     assert exc.value.status_code == status
 
@@ -197,7 +197,7 @@ def test_an_unreachable_auth_service_is_our_503_not_the_callers_401():
     client, _ = build_auth_client(side_effect=requests.ConnectionError("refused"))
 
     with pytest.raises(Exception) as exc:
-        client.validate("sess-1", "/api/v1/news/deals")
+        client.validate("sess-1", "/api/news/deals")
 
     assert exc.value.status_code == 503
 
@@ -206,7 +206,7 @@ def test_auth_service_5xx_is_also_a_503():
     client, _ = build_auth_client(fake_response(status_code=502, body={}))
 
     with pytest.raises(Exception) as exc:
-        client.validate("sess-1", "/api/v1/news/deals")
+        client.validate("sess-1", "/api/news/deals")
 
     assert exc.value.status_code == 503
 
@@ -223,7 +223,7 @@ def test_an_answer_we_cannot_read_is_a_502_never_an_authenticated_request(respon
     client, _ = build_auth_client(response)
 
     with pytest.raises(Exception) as exc:
-        client.validate("sess-1", "/api/v1/news/deals")
+        client.validate("sess-1", "/api/news/deals")
 
     assert exc.value.status_code == 502
 
@@ -235,8 +235,8 @@ def test_an_answer_we_cannot_read_is_a_502_never_an_authenticated_request(respon
 def test_a_repeat_call_within_the_ttl_does_not_hit_the_network_again():
     client, http = build_auth_client(ttl=30.0)
 
-    client.validate("sess-1", "/api/v1/news/deals")
-    client.validate("sess-1", "/api/v1/news/deals")
+    client.validate("sess-1", "/api/news/deals")
+    client.validate("sess-1", "/api/news/deals")
 
     assert http.post.call_count == 1
 
@@ -246,8 +246,8 @@ def test_the_same_session_on_a_different_endpoint_is_validated_again():
     refused on another, so the endpoint has to be part of the key."""
     client, http = build_auth_client(ttl=30.0)
 
-    client.validate("sess-1", "/api/v1/news/deals")
-    client.validate("sess-1", "/api/v1/news/articles")
+    client.validate("sess-1", "/api/news/deals")
+    client.validate("sess-1", "/api/news/articles")
 
     assert http.post.call_count == 2
 
@@ -255,9 +255,9 @@ def test_the_same_session_on_a_different_endpoint_is_validated_again():
 def test_a_cached_verdict_expires():
     client, http = build_auth_client(ttl=0.05)
 
-    client.validate("sess-1", "/api/v1/news/deals")
+    client.validate("sess-1", "/api/news/deals")
     time.sleep(0.06)
-    client.validate("sess-1", "/api/v1/news/deals")
+    client.validate("sess-1", "/api/news/deals")
 
     assert http.post.call_count == 2
 
@@ -271,7 +271,7 @@ def test_rejections_are_not_cached():
 
     for _ in range(2):
         with pytest.raises(Exception):
-            client.validate("sess-1", "/api/v1/news/deals")
+            client.validate("sess-1", "/api/news/deals")
 
     assert http.post.call_count == 2
 
@@ -288,11 +288,11 @@ def build_app(auth_client=None):
     def health():
         return {"status": "ok"}
 
-    @app.post("/api/v1/news/tracked-companies")
+    @app.post("/api/news/tracked-companies")
     def register():
         return {"registered": True}
 
-    @app.get("/api/v1/news/deals/{deal_id}")
+    @app.get("/api/news/deals/{deal_id}")
     def deal(deal_id: str, session=Depends(get_user_session)):
         return {
             "deal_id": deal_id,
@@ -300,7 +300,7 @@ def build_app(auth_client=None):
             "client_ip": session.client_ip,
         }
 
-    @app.get("/api/v1/news/articles")
+    @app.get("/api/news/articles")
     def articles():
         """A route that never looks at who is asking — auth still guards it."""
         return {"items": []}
@@ -319,7 +319,7 @@ def auth_on():
 def test_a_request_with_no_token_is_401_without_calling_the_auth_service():
     client, http = build_auth_client()
 
-    response = TestClient(build_app(client)).get("/api/v1/news/deals/d1")
+    response = TestClient(build_app(client)).get("/api/news/deals/d1")
 
     assert response.status_code == 401
     assert http.post.call_count == 0
@@ -327,7 +327,7 @@ def test_a_request_with_no_token_is_401_without_calling_the_auth_service():
 
 def test_a_valid_session_reaches_the_route():
     response = TestClient(build_app()).get(
-        "/api/v1/news/deals/d1", headers={"Authorization": "sess-1"}
+        "/api/news/deals/d1", headers={"Authorization": "sess-1"}
     )
 
     assert response.status_code == 200
@@ -340,10 +340,10 @@ def test_the_route_template_is_what_gets_authorized_not_the_literal_url():
     client, http = build_auth_client()
 
     TestClient(build_app(client)).get(
-        "/api/v1/news/deals/d1", headers={"Authorization": "sess-1"}
+        "/api/news/deals/d1", headers={"Authorization": "sess-1"}
     )
 
-    assert http.post.call_args.kwargs["json"] == {"apiEndPoint": "/api/v1/news/deals/{deal_id}"}
+    assert http.post.call_args.kwargs["json"] == {"apiEndPoint": "/api/news/deals/{deal_id}"}
 
 
 def test_health_answers_without_a_token():
@@ -361,7 +361,7 @@ def test_the_done_deal_push_endpoint_answers_without_a_token():
     user session behind that call."""
     client, http = build_auth_client()
 
-    response = TestClient(build_app(client)).post("/api/v1/news/tracked-companies")
+    response = TestClient(build_app(client)).post("/api/news/tracked-companies")
 
     assert response.status_code == 200
     assert http.post.call_count == 0
@@ -371,7 +371,7 @@ def test_the_client_ip_is_ours_not_the_one_company_service_saw():
     """company-service sees this service's IP, not the browser's. Passing its
     value through would file every request under this service's address."""
     response = TestClient(build_app()).get(
-        "/api/v1/news/deals/d1", headers={"Authorization": "sess-1"}
+        "/api/news/deals/d1", headers={"Authorization": "sess-1"}
     )
 
     assert response.status_code == 200
@@ -387,11 +387,11 @@ def test_a_cached_session_does_not_leak_the_previous_callers_ip():
     test_client = TestClient(build_app(auth_client))
 
     first = test_client.get(
-        "/api/v1/news/deals/d1",
+        "/api/news/deals/d1",
         headers={"Authorization": "sess-1", "X-Forwarded-For": "10.0.0.1"},
     )
     second = test_client.get(
-        "/api/v1/news/deals/d1",
+        "/api/news/deals/d1",
         headers={"Authorization": "sess-1", "X-Forwarded-For": "10.0.0.2, 10.9.9.9"},
     )
 
@@ -405,7 +405,7 @@ def test_a_forwarded_for_header_is_ignored_unless_proxy_headers_are_trusted():
     client, _ = build_auth_client()
 
     response = TestClient(build_app(client)).get(
-        "/api/v1/news/deals/d1",
+        "/api/news/deals/d1",
         headers={"Authorization": "sess-1", "X-Forwarded-For": "1.2.3.4"},
     )
 
@@ -454,7 +454,7 @@ def test_auth_disabled_lets_everything_through():
     set_config(AppConfig(auth=AuthSettings(enabled=False)))
     client, http = build_auth_client()
 
-    response = TestClient(build_app(client)).get("/api/v1/news/articles")
+    response = TestClient(build_app(client)).get("/api/news/articles")
 
     assert response.status_code == 200
     assert http.post.call_count == 0
@@ -464,8 +464,8 @@ def test_auth_enabled_guards_a_route_that_never_asks_who_is_calling():
     client, http = build_auth_client()
     test_client = TestClient(build_app(client))
 
-    assert test_client.get("/api/v1/news/articles").status_code == 401
+    assert test_client.get("/api/news/articles").status_code == 401
     assert test_client.get(
-        "/api/v1/news/articles", headers={"Authorization": "sess-1"}
+        "/api/news/articles", headers={"Authorization": "sess-1"}
     ).status_code == 200
     assert http.post.call_count == 1

@@ -114,7 +114,7 @@ INSERT INTO company (name, brand_name, website, status) VALUES
 -- ---------------------------------------------------------------------------
 -- Sellers with explicit ids, mirroring real Done Deal seller references so the
 -- entity news flow can be exercised end to end: the UI's "S5123" card resolves
--- through `GET /api/v1/entities/S5123/news` to this row, and from its name to
+-- through `GET /api/news/entities/S5123/news` to this row, and from its name to
 -- the deals in Neo4j. Ids are set explicitly (not AUTO_INCREMENT) because the
 -- reference is the fixture — S5123 must be Delhivery on every reseed.
 --

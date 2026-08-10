@@ -280,7 +280,7 @@ class RegisteredCompanyResponse(BaseModel):
     )
     job_id: Optional[str] = Field(
         None,
-        description="Backfill scrape job; poll GET /api/v1/news/companies/scrape/{job_id}",
+        description="Backfill scrape job; poll GET /api/news/companies/scrape/{job_id}",
     )
 
 
