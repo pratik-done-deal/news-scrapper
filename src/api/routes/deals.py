@@ -57,10 +57,10 @@ def bookmark_deal(
 ):
     """Set or clear a deal's bookmark (idempotent).
 
-    The deal id comes in the body: `{"deal_id": "...", "bookmarked": true}`.
-    Omitting `bookmarked` bookmarks the deal; send `false` to remove it.
+    Both keys are required in the body: `{"deal_id": "...", "bookmark": true}`.
+    Send `bookmark: true` to bookmark the news, `false` to remove it.
     """
-    deal = queries.set_deal_bookmark(conn, payload.deal_id, payload.bookmarked)
+    deal = queries.set_deal_bookmark(conn, payload.deal_id, payload.bookmark)
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
     return deal

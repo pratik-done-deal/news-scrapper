@@ -220,8 +220,8 @@ class BookmarkDealRequest(BaseModel):
     """
 
     deal_id: UUID = Field(..., description="Id of the deal to bookmark.")
-    bookmarked: bool = Field(
-        True, description="True to bookmark, false to remove the bookmark."
+    bookmark: bool = Field(
+        ..., description="True to bookmark, false to remove the bookmark."
     )
 
 
