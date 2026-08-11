@@ -1,7 +1,13 @@
 scraping:
   request_timeout: 30
   delay_between_requests: 2  # seconds between article fetches to avoid rate limiting
-  max_articles_per_source: 20
+  # Temporarily raised 20 -> 50 to catch up the ET sources: their feeds hold 50
+  # items but only the newest 20 were ever taken, so items 21-50 aged out unread
+  # (~150 articles back to 2026-07-10). 50 is the feed depth — higher gains
+  # nothing on RSS sources and only makes the listing scrapers walk more pages.
+  # Revert to 20 after one full scrape cycle; steady-state ticks every 10m need
+  # nowhere near 50, and the smaller cap keeps the per-tick article fetches down.
+  max_articles_per_source: 50
   batch_size: 10  # articles per DB write once all sources finish scraping
 
 groq:

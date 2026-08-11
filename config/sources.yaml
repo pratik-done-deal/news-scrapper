@@ -9,13 +9,54 @@
 sources:
   - name: Economic Times Corporate
     url: https://economictimes.indiatimes.com/news/company/corporate-trends
-    # No RSS: ET's feeds are section-scoped and none maps to corporate-trends —
-    # the id that looks like it does serves international news instead.
+    # Company-News feed, listed in ET's own index at /rss.cms. 50 items covering
+    # ~2 weeks, every link under /news/company/ — so the default
+    # `rss_link_contains` behaviour needs no override.
+    rss_url: https://economictimes.indiatimes.com/news/company/rssfeeds/2143429.cms
     domain: economictimes.indiatimes.com
     link_contains: /news/company/
     scraper: et
     paginate: true      # enables multi-page date-range scraping when --start-date/--end-date are passed
     max_pages: 20       # how many listing pages to walk through
+
+  - name: Economic Times Startups
+    url: https://economictimes.indiatimes.com/tech/startups
+    # Startups-Tech feed: 50 items, ~2 weeks, all under /tech/startups/.
+    rss_url: https://economictimes.indiatimes.com/tech/startups/rssfeeds/78570540.cms
+    domain: economictimes.indiatimes.com
+    link_contains: /tech/startups/
+    scraper: et
+    paginate: false
+
+
+  - name: Economic Times Tech and Internet
+    url: https://economictimes.indiatimes.com/tech/technology
+    # Tech & Internet-Tech feed: 50 items, all under /tech/technology/.
+    # Highest-volume of the four — 50 items spans only ~3 days, so this one
+    # depends on the routine schedule running at least every couple of days.
+    rss_url: https://economictimes.indiatimes.com/tech/technology/rssfeeds/78570561.cms
+    domain: economictimes.indiatimes.com
+    link_contains: /tech/technology/
+    scraper: et
+    paginate: false
+
+  - name: Economic Times Funding
+    url: https://economictimes.indiatimes.com/tech/funding
+    # Funding-Tech feed: 50 items, ~27 days, all under /tech/funding/.
+    rss_url: https://economictimes.indiatimes.com/tech/funding/rssfeeds/78570550.cms
+    domain: economictimes.indiatimes.com
+    link_contains: /tech/funding/
+    scraper: et
+    paginate: false
+
+  - name: Economic Times Telecom
+    url: https://economictimes.indiatimes.com/industry/telecom
+    # Telecom-Industry feed: 50 items, ~31 days, all under /industry/telecom/.
+    rss_url: https://economictimes.indiatimes.com/industry/telecom/rssfeeds/13354103.cms
+    domain: economictimes.indiatimes.com
+    link_contains: /industry/telecom/
+    scraper: et
+    paginate: false
 
   - name: India Infoline M&A
     url: https://www.indiainfoline.com/news/mergers-acquisitions
