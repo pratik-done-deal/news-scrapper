@@ -58,6 +58,28 @@ def _bookmark_condition(bookmarked: Optional[bool]) -> str:
     return "coalesce(d.is_bookmarked, false) = false"
 
 
+def _search_condition(q: Optional[str]) -> str:
+    """Cypher predicate on `art`/`d` for the deals search box, or "" when blank.
+
+    Matches everything the card actually shows: the headline and source come
+    from the article, the paragraph from the deal, and the parties from the
+    Company nodes hanging off it. The company leg is an EXISTS subquery rather
+    than a MATCH so a deal with three parties still counts once — a plain
+    traversal would multiply the row and inflate `total`.
+    """
+    if not q or not q.strip():
+        return ""
+    return (
+        "("
+        "toLower(art.title) CONTAINS toLower($q)"
+        " OR toLower(art.source) CONTAINS toLower($q)"
+        " OR toLower(d.summary) CONTAINS toLower($q)"
+        f" OR EXISTS {{ MATCH (sc:NewsCompany)-[:{COMPANY_DEAL_RELS}]->(d)"
+        " WHERE toLower(sc.name) CONTAINS toLower($q) }"
+        ")"
+    )
+
+
 def _signal_row(record) -> dict:
     signal = dict(record["s"])
     for key in ("positive_signals", "negative_signals", "evidence_articles"):
@@ -308,12 +330,17 @@ def list_deals(
     deal_type: Optional[str] = None,
     days: Optional[int] = None,
     bookmarked: Optional[bool] = None,
+    q: Optional[str] = None,
     offset: int = 0,
     limit: int = 20,
 ) -> tuple[int, list[dict]]:
     conditions = []
     params: dict = {}
 
+    search_cond = _search_condition(q)
+    if search_cond:
+        conditions.append(search_cond)
+        params["q"] = q.strip()
     if sector:
         conditions.append("toLower(d.sector) CONTAINS toLower($sector)")
         params["sector"] = sector

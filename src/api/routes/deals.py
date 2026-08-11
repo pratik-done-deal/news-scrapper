@@ -22,6 +22,13 @@ def list_deals(
     deal_type: Optional[str] = Query(None, description="Filter by deal type (partial match)"),
     days: Optional[int] = Query(None, ge=1, description="Only deals from articles published in the last N days"),
     bookmarked: Optional[bool] = Query(None, description="Only bookmarked deals when true"),
+    q: Optional[str] = Query(
+        None,
+        description=(
+            "Free-text search over the headline, source, deal summary and party "
+            "names. Case-insensitive substring match; blank is treated as absent."
+        ),
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     conn: Neo4jConnection = Depends(get_connection),
@@ -33,6 +40,7 @@ def list_deals(
         deal_type=deal_type,
         days=days,
         bookmarked=bookmarked,
+        q=q,
         offset=offset,
         limit=page_size,
     )
