@@ -58,26 +58,50 @@ def _bookmark_condition(bookmarked: Optional[bool]) -> str:
     return "coalesce(d.is_bookmarked, false) = false"
 
 
-def _search_condition(q: Optional[str]) -> str:
-    """Cypher predicate on `art`/`d` for the deals search box, or "" when blank.
+# A query is split into at most this many words. Each word costs its own pass
+# over the row, and nobody types a meaningful fifteen-word search — the extra
+# words are dropped rather than allowed to grow the query without bound.
+_SEARCH_MAX_TERMS = 8
+
+
+def _search_condition(q: Optional[str]) -> tuple[str, dict]:
+    """Cypher predicate on `art`/`d` for the deals search box, plus its params.
 
     Matches everything the card actually shows: the headline and source come
     from the article, the paragraph from the deal, and the parties from the
     Company nodes hanging off it. The company leg is an EXISTS subquery rather
     than a MATCH so a deal with three parties still counts once — a plain
     traversal would multiply the row and inflate `total`.
+
+    The query is split on whitespace and every word must match *somewhere* in
+    that set (AND across words, OR across fields). This is what lets a partial
+    headline find its news: "Ayati Inflexor" matches the headline that has both
+    words with four words between them, which a single CONTAINS over the whole
+    phrase would miss. A one-word query behaves exactly like a plain substring
+    match. Words are lowercased here so the predicate doesn't pay for toLower()
+    on the parameter once per row.
+
+    Returns ("", {}) for a blank query so an empty box lists everything.
     """
-    if not q or not q.strip():
-        return ""
-    return (
-        "("
-        "toLower(art.title) CONTAINS toLower($q)"
-        " OR toLower(art.source) CONTAINS toLower($q)"
-        " OR toLower(d.summary) CONTAINS toLower($q)"
-        f" OR EXISTS {{ MATCH (sc:NewsCompany)-[:{COMPANY_DEAL_RELS}]->(d)"
-        " WHERE toLower(sc.name) CONTAINS toLower($q) }"
-        ")"
-    )
+    terms = (q or "").split()[:_SEARCH_MAX_TERMS]
+    if not terms:
+        return "", {}
+
+    clauses = []
+    params: dict = {}
+    for i, term in enumerate(terms):
+        key = f"q{i}"
+        params[key] = term.lower()
+        clauses.append(
+            "("
+            f"toLower(art.title) CONTAINS ${key}"
+            f" OR toLower(art.source) CONTAINS ${key}"
+            f" OR toLower(d.summary) CONTAINS ${key}"
+            f" OR EXISTS {{ MATCH (sc:NewsCompany)-[:{COMPANY_DEAL_RELS}]->(d)"
+            f" WHERE toLower(sc.name) CONTAINS ${key} }}"
+            ")"
+        )
+    return "(" + " AND ".join(clauses) + ")", params
 
 
 def _signal_row(record) -> dict:
@@ -337,10 +361,10 @@ def list_deals(
     conditions = []
     params: dict = {}
 
-    search_cond = _search_condition(q)
+    search_cond, search_params = _search_condition(q)
     if search_cond:
         conditions.append(search_cond)
-        params["q"] = q.strip()
+        params.update(search_params)
     if sector:
         conditions.append("toLower(d.sector) CONTAINS toLower($sector)")
         params["sector"] = sector

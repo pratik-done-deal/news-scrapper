@@ -79,19 +79,42 @@ def test_omitting_the_term_lists_everything():
 
 
 def test_predicate_covers_headline_source_summary_and_parties():
-    condition = _search_condition("freightfox")
+    condition, params = _search_condition("freightfox")
 
-    assert "toLower(art.title) CONTAINS toLower($q)" in condition
-    assert "toLower(art.source) CONTAINS toLower($q)" in condition
-    assert "toLower(d.summary) CONTAINS toLower($q)" in condition
+    assert params == {"q0": "freightfox"}
+    assert "toLower(art.title) CONTAINS $q0" in condition
+    assert "toLower(art.source) CONTAINS $q0" in condition
+    assert "toLower(d.summary) CONTAINS $q0" in condition
     # The party leg must not multiply the row: a deal with a buyer and a seller
     # would otherwise be counted twice in `total`.
     assert "EXISTS {" in condition
     assert "(sc:NewsCompany)-[:BOUGHT|SOLD|INVESTED_IN|INVOLVED_IN|ABOUT]->(d)" in condition
 
 
+def test_every_word_must_match_but_not_as_one_phrase():
+    """"Ayati Inflexor" has four words between it in the headline, so the words
+    are required separately — a single CONTAINS on the phrase would find nothing."""
+    condition, params = _search_condition("Ayati Inflexor")
+
+    assert params == {"q0": "ayati", "q1": "inflexor"}
+    assert " AND " in condition
+    assert "$q0" in condition and "$q1" in condition
+
+
+def test_terms_are_lowercased_for_the_parameter():
+    _, params = _search_condition("FreightFox")
+
+    assert params == {"q0": "freightfox"}
+
+
+def test_a_long_query_is_capped():
+    _, params = _search_condition(" ".join(f"w{i}" for i in range(20)))
+
+    assert len(params) == 8
+
+
 def test_a_blank_term_is_not_a_filter():
     """An empty box must list everything, not match every row's empty string."""
-    assert _search_condition(None) == ""
-    assert _search_condition("") == ""
-    assert _search_condition("   ") == ""
+    assert _search_condition(None) == ("", {})
+    assert _search_condition("") == ("", {})
+    assert _search_condition("   ") == ("", {})
