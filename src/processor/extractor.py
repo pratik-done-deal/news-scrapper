@@ -143,6 +143,22 @@ class DealExtractor:
             logger.info(f"LLM request took {elapsed:.2f}s (model={self.model})")
 
             raw = json.loads(response.choices[0].message.content)
+            # Weekly roundups ("Indian startups raised $252M this week") cover
+            # dozens of deals, and the model answers with a LIST of them. The
+            # graph stores exactly one deal per article — `d.article_id` is
+            # uniquely constrained — so there is nowhere to put the rest, and
+            # keeping an arbitrary one would attribute the whole article's
+            # value to a single startup. Skip the article and say so loudly:
+            # a WARNING makes these countable in the logs, which is what a
+            # later decision about real multi-deal support will need.
+            if isinstance(raw, list):
+                logger.warning(
+                    "Skipping multi-deal article — model returned %d deals but the "
+                    "schema holds one per article: %r",
+                    len(raw),
+                    (title or "(no title)")[:100],
+                )
+                return None
             return DealData(**raw)
         except Exception as e:
             logger.error(f"Extraction LLM call failed: {e}")

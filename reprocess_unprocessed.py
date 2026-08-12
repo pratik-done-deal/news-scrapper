@@ -1,6 +1,6 @@
 """
 Batch re-run deal extraction on all articles that are M&A-relevant but
-not yet processed (is_ma_relevant=TRUE, is_processed=FALSE).
+not yet processed (is_ma_funding_relevant=TRUE, is_processed=FALSE).
 
 These are articles where the LLM call failed (e.g. token limit) during
 the original pipeline run, leaving no deal node in the database.
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 def fetch_unprocessed(driver, database: str, limit: int | None) -> list[dict]:
     cypher = """
         MATCH (a:NewsArticle)
-        WHERE a.is_ma_relevant = true AND a.is_processed = false
+        WHERE a.is_ma_funding_relevant = true AND a.is_processed = false
         RETURN a.id AS id, a.title AS title, a.content AS content
         ORDER BY a.scraped_at ASC
     """
