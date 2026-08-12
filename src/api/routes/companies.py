@@ -100,6 +100,13 @@ def generate_company_signal(
     horizon_days: int = Query(30, ge=1, le=90),
     conn: Neo4jConnection = Depends(get_connection),
 ):
+    settings = getattr(request.app.state, "settings", {})
+    if not settings.get("signals", {}).get("enabled", False):
+        raise HTTPException(
+            status_code=503,
+            detail="Company signal generation is disabled (set signals.enabled in config/settings.yaml)",
+        )
+
     company, articles, deal_history = queries.get_company_signal_context(
         conn,
         company_id,
@@ -120,7 +127,6 @@ def generate_company_signal(
             detail="A Groq API key is required to generate company signals from news",
         )
 
-    settings = getattr(request.app.state, "settings", {})
     groq_cfg = settings.get("groq", {})
     scorer = CompanySignalScorer(
         client=Groq(api_key=groq_api_key),
