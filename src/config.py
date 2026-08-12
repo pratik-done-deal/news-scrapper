@@ -67,6 +67,9 @@ class Neo4jSettings:
 
 @dataclass
 class GroqSettings:
+    """The LLM API key. Now a Gemini key — the section and flag keep the `groq`
+    name so existing command lines and exported config blobs stay valid."""
+
     api_key: str = ""
 
 
@@ -165,7 +168,7 @@ class AppConfig:
     def require_groq_api_key(self) -> str:
         if not self.groq.api_key:
             raise ConfigError(
-                "Groq API key is not set. Pass --groq-api-key, or change the "
+                "LLM API key is not set. Pass --groq-api-key (a Gemini key), or change the "
                 "default in src/config.py."
             )
         return self.groq.api_key
@@ -228,7 +231,7 @@ OPTIONS: tuple[_Option, ...] = (
     _Option("--neo4j-user", "neo4j", "user", str, "Neo4j user"),
     _Option("--neo4j-password", "neo4j", "password", str, "Neo4j password (required)"),
     _Option("--neo4j-database", "neo4j", "database", str, "Neo4j database name"),
-    _Option("--groq-api-key", "groq", "api_key", str, "Groq API key (required)"),
+    _Option("--groq-api-key", "groq", "api_key", str, "Gemini API key (required)"),
     _Option(
         "--auth-enabled", "auth", "enabled", boolean,
         "false serves every endpoint unauthenticated; local development only",

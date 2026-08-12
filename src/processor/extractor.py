@@ -3,12 +3,12 @@ import logging
 import time
 from typing import Optional
 
-from groq import Groq
+from openai import OpenAI
 from pydantic import BaseModel, field_validator
 
 logger = logging.getLogger(__name__)
 
-GROQ_REQUEST_DELAY_SECONDS = 10
+LLM_REQUEST_DELAY_SECONDS = 10
 
 SECTORS = [
     "D2C", "Edtech", "Fintech", "Gaming", "Agency", "Marketplace",
@@ -117,7 +117,7 @@ class DealData(BaseModel):
 
 
 class DealExtractor:
-    def __init__(self, client: Groq, model: str):
+    def __init__(self, client: OpenAI, model: str):
         self.client = client
         self.model = model
 
@@ -140,7 +140,7 @@ class DealExtractor:
                 response_format={"type": "json_object"},
             )
             elapsed = time.monotonic() - start
-            logger.info(f"Groq request took {elapsed:.2f}s (model={self.model})")
+            logger.info(f"LLM request took {elapsed:.2f}s (model={self.model})")
 
             raw = json.loads(response.choices[0].message.content)
             return DealData(**raw)
@@ -148,4 +148,4 @@ class DealExtractor:
             logger.error(f"Extraction LLM call failed: {e}")
             return None
         finally:
-            time.sleep(GROQ_REQUEST_DELAY_SECONDS)
+            time.sleep(LLM_REQUEST_DELAY_SECONDS)

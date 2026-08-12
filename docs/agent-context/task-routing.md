@@ -30,7 +30,7 @@ Use `one cache/doc` literally: read the first routed file, then move to exact so
 |--------------|--------------------|
 | scraper, source, site, article links, date parser, trafilatura | `module-cache/scraper.md` |
 | keyword, relevant, false positive, false negative, M&A filter | `module-cache/filter.md` |
-| Groq, LLM, extraction, prompt, sector, sub-sector, deal type | `module-cache/extractor.md` |
+| Gemini, LLM, extraction, prompt, sector, sub-sector, deal type | `module-cache/extractor.md` |
 | Neo4j, Cypher, company, relationship, duplicate URL, graph schema | `module-cache/storage.md` |
 | MySQL, SQL, company DB, business data, DAO, read-only query | `module-cache/company-mysql.md` |
 | watchlist, tracked companies, entity gate, search term, newly added | `module-cache/watchlist.md` |

@@ -13,7 +13,7 @@ python -m pytest
 python scripts/check_agent_workflow.py
 ```
 
-Run targeted live smoke checks only when the change needs real network, Groq, or Neo4j behavior:
+Run targeted live smoke checks only when the change needs real network, LLM, or Neo4j behavior:
 
 ```bash
 python validate_filter.py
@@ -31,7 +31,7 @@ Do not claim live verification unless it was actually run and the required env v
 - Keep datetimes timezone-aware. Pipeline date ranges use IST; DB timestamps currently use UTC ISO strings unless a nearby code path says otherwise.
 - Use Pydantic v2 validators for schema normalization.
 - Keep Cypher parameterized with `$param`; never interpolate user-controlled strings.
-- Keep Groq extraction deterministic: low temperature and JSON response format.
+- Keep LLM extraction deterministic: low temperature and JSON response format.
 - Secrets are passed as CLI flags (`--neo4j-password`, `--groq-api-key`, `--mysql-password`); they have empty defaults in `src/config.py` and must never be hardcoded there or printed.
 - Avoid editing generated files, `venv/`, `__pycache__/`, or logs.
 

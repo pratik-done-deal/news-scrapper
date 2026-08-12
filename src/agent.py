@@ -5,9 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from groq import Groq
-
 from .db.repository import NewsRepository
+from .llm_client import create_llm_client
 from .logging_config import setup_logging
 from .processor.company_signal import deal_amount_token, is_duplicate_of_deal
 from .processor.extractor import DealExtractor
@@ -427,7 +426,9 @@ class NewsAgent:
             pool_size=self.db_config.db_pool_size,
         )
         self.news_filter = NewsFilter()
-        self.extractor = DealExtractor(Groq(api_key=groq_api_key), settings["groq"]["model"])
+        self.extractor = DealExtractor(
+            create_llm_client(groq_api_key, settings), settings["groq"]["model"]
+        )
 
     def _resolve_date_range(
         self,

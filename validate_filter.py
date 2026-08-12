@@ -10,10 +10,11 @@ import argparse
 import json
 import sys
 
-from groq import Groq
+from openai import OpenAI
 
 from src.agent import SCRAPER_REGISTRY
 from src.config import ConfigError, add_config_arguments, load_config
+from src.llm_client import create_llm_client
 from src.paths import load_settings, load_sources_config
 from src.processor.filter import NewsFilter
 
@@ -42,7 +43,7 @@ Content (truncated): {content}
 SEP = "─" * 70
 
 
-def ai_check(client: Groq, model: str, title: str | None, content: str | None) -> tuple[bool, str]:
+def ai_check(client: OpenAI, model: str, title: str | None, content: str | None) -> tuple[bool, str]:
     try:
         prompt = AI_PROMPT.format(
             title=title or "(no title)",
@@ -75,7 +76,7 @@ def main() -> None:
     sources = load_sources_config()["sources"]
 
     kw_filter = NewsFilter()
-    groq_client = Groq(api_key=groq_api_key)
+    groq_client = create_llm_client(groq_api_key, settings)
     model = settings["groq"]["model"]
     max_articles = settings["scraping"]["max_articles_per_source"]
     scraper_kwargs = {

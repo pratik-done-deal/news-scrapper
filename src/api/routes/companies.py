@@ -3,7 +3,6 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from groq import Groq
 
 from ..dependencies import get_connection
 from ..schemas import (
@@ -13,6 +12,7 @@ from ..schemas import (
 )
 from ...db import queries
 from ...db.queries import Neo4jConnection
+from ...llm_client import DEFAULT_MODEL, create_llm_client
 from ...processor.company_signal import CompanySignalScorer, empty_signal_snapshot
 
 router = APIRouter(prefix="/companies", tags=["companies"])
@@ -124,13 +124,13 @@ def generate_company_signal(
     if not groq_api_key:
         raise HTTPException(
             status_code=503,
-            detail="A Groq API key is required to generate company signals from news",
+            detail="A Gemini API key is required to generate company signals from news",
         )
 
     groq_cfg = settings.get("groq", {})
     scorer = CompanySignalScorer(
-        client=Groq(api_key=groq_api_key),
-        model=groq_cfg.get("model", "llama-3.3-70b-versatile"),
+        client=create_llm_client(groq_api_key, settings),
+        model=groq_cfg.get("model", DEFAULT_MODEL),
         temperature=groq_cfg.get("temperature", 0.1),
     )
     try:

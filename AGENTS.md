@@ -1,6 +1,6 @@
 # AGENTS.md - Deal & Funding Intelligence Platform
 
-Scrapes Indian financial news (ET, FE, CNBC TV18, IIFL), filters M&A/funding articles, extracts structured deal data via Groq LLM, stores in Neo4j. Exposed via FastAPI.
+Scrapes Indian financial news (ET, FE, CNBC TV18, IIFL), filters M&A/funding articles, extracts structured deal data via Gemini (gemini-3.5-flash-lite), stores in Neo4j. Exposed via FastAPI.
 **Deep reference:** [docs/reference/project-context.md](docs/reference/project-context.md)
 
 ## Agentic Development Workflow
@@ -36,7 +36,7 @@ Do not read every agent, skill, or cache file by default. If a module cache iden
 | Pipeline | [agents/pipeline-agent.md](agents/pipeline-agent.md) | Pipeline entry point; producer/consumer IPC |
 | Scraper | [agents/scraper-agent.md](agents/scraper-agent.md) | Fetches links + article content from news sites |
 | Filter | [agents/filter-agent.md](agents/filter-agent.md) | Keyword-based M&A/funding relevance gate |
-| Extractor | [agents/extractor-agent.md](agents/extractor-agent.md) | Groq LLM → structured `DealData` |
+| Extractor | [agents/extractor-agent.md](agents/extractor-agent.md) | Gemini LLM → structured `DealData` |
 | Storage | [agents/storage-agent.md](agents/storage-agent.md) | Neo4j CRUD — articles, deals, companies |
 | API | [agents/api-agent.md](agents/api-agent.md) | FastAPI REST layer |
 
@@ -67,7 +67,7 @@ Do not read every agent, skill, or cache file by default. If a module cache iden
 | `src/api/` | FastAPI app, routes, schemas, DI |
 | `src/api/auth.py` | Session validation against company-service; exempt route list |
 | `src/config.py` | Deployment configuration — defaults plus the CLI flags that override them |
-| `config/settings.yaml` | Timeouts, delays, Groq model, pool size |
+| `config/settings.yaml` | Timeouts, delays, LLM model (`groq.model` — now a Gemini model), pool size |
 | `config/sources.yaml` | News source list with scraper keys |
 
 ## Run Commands
@@ -211,7 +211,7 @@ a flag on the entry point's parser. Precedence is exactly two layers: the
 default in `src/config.py`, and whatever the caller passed.
 
 `config/settings.yaml` is unchanged and separate: it holds tuning that is the
-same in every deployment (timeouts, Groq model, pool sizes, scheduler
+same in every deployment (timeouts, LLM model, pool sizes, scheduler
 intervals). Anything that identifies a deployment lives in `src/config.py`.
 
 ```
@@ -219,7 +219,7 @@ intervals). Anything that identifies a deployment lives in `src/config.py`.
 --neo4j-user           neo4j
 --neo4j-password       <required, no default>
 --neo4j-database       newsscrapedatabase
---groq-api-key         <required, no default>
+--groq-api-key         <required, no default>   # a GEMINI key; flag name kept for compatibility
 
 # Auth — validated against company-service on every request
 --auth-enabled              true      # false = no auth at all; local dev only
@@ -297,7 +297,7 @@ default**. To run the timers at all, pass `--scheduler-enabled true` on exactly
 ```bash
 python -m pytest              # offline development verification
 python -m pytest tests/test_auth.py    # session validation, fully offline
-python validate_filter.py --groq-api-key <key>   # live Groq/news smoke check
+python validate_filter.py --groq-api-key <key>   # live LLM/news smoke check
 python test_date_range.py     # live ET date range smoke check
 
 # Auth against the real company-service. Verifies config, the session, and —

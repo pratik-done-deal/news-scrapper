@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
-from groq import Groq
+from openai import OpenAI
 from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
@@ -531,7 +531,7 @@ def empty_signal_snapshot(
 
 
 class CompanySignalScorer:
-    def __init__(self, client: Groq, model: str, temperature: float = 0.1):
+    def __init__(self, client: OpenAI, model: str, temperature: float = 0.1):
         self.client = client
         self.model = model
         self.temperature = temperature

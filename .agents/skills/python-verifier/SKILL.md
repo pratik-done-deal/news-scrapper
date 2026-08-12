@@ -27,7 +27,7 @@ python api_server.py
 
 1. Pick the smallest useful verification.
 2. Prefer offline tests for normal development.
-3. Do not invent passing live checks when env vars, network, Groq, or Neo4j are unavailable.
+3. Do not invent passing live checks when env vars, network, the LLM API, or Neo4j are unavailable.
 4. If pytest is missing, report it and install only with user/network approval.
 5. For failures, classify syntax/import, unit assertion, env, network, or dependency issue.
 

@@ -18,11 +18,11 @@ import argparse
 import logging
 import sys
 
-from groq import Groq
 from neo4j import GraphDatabase
 
 from src.config import ConfigError, add_config_arguments, load_config
 from src.db.repository import NewsRepository
+from src.llm_client import create_llm_client
 from src.logging_config import setup_logging
 from src.paths import load_settings
 from src.processor.extractor import DealExtractor
@@ -100,7 +100,7 @@ def main() -> None:
             password=neo4j_password,
             database=neo4j_database,
         )
-        extractor = DealExtractor(Groq(api_key=groq_api_key), model)
+        extractor = DealExtractor(create_llm_client(groq_api_key, settings), model)
 
         success = skipped = failed = 0
 

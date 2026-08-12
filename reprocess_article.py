@@ -9,11 +9,11 @@ Usage:
 import argparse
 import sys
 
-from groq import Groq
 from neo4j import GraphDatabase
 
 from src.config import ConfigError, add_config_arguments, load_config
 from src.db.repository import NewsRepository
+from src.llm_client import create_llm_client
 from src.paths import load_settings
 from src.processor.extractor import DealExtractor
 
@@ -58,7 +58,7 @@ def main() -> None:
         print(f"Content : {(content or '')[:120]}...")
         print()
 
-        extractor = DealExtractor(Groq(api_key=groq_api_key), model)
+        extractor = DealExtractor(create_llm_client(groq_api_key, settings), model)
         deal = extractor.extract(title, content)
 
         if not deal:

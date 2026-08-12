@@ -29,7 +29,7 @@ Scaling rule:
 Useful future agents/skills for this product:
 
 - `source-health-agent`: scraper layout drift, empty extraction, date parser failures.
-- `extraction-eval-agent`: golden article set, Groq prompt/schema quality checks.
+- `extraction-eval-agent`: golden article set, LLM prompt/schema quality checks.
 - `graph-quality-agent`: Neo4j duplicates, missing relationships, company normalization regressions.
 - `source-onboarding-skill`: source config, registry, parser tests, and live smoke checklist.
 - `api-contract-agent`: route/schema/query compatibility and response contract review.

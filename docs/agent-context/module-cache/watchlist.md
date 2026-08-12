@@ -32,7 +32,7 @@ The gate is deliberately wider than the search: a listing scrape already paid fo
 
 `_run_scrape_jobs()` takes `(source, company_or_None)` pairs and runs them in **one** process pool; `_scrape_all_sources()` is now a thin wrapper over it. Articles come back tagged with `searched_company`, which is how `scrape_watchlist()` tells a targeted hit (keep) from a listing article (gate).
 
-Do not implement a watchlist run by looping `scrape_company()`: it opens a process pool **and** calls `extract_pending(limit=None)` per call, so N companies means N pools and N full Groq extraction passes. `scrape_watchlist()` extracts exactly once, at the end.
+Do not implement a watchlist run by looping `scrape_company()`: it opens a process pool **and** calls `extract_pending(limit=None)` per call, so N companies means N pools and N full LLM extraction passes. `scrape_watchlist()` extracts exactly once, at the end.
 
 ## Config and API
 
@@ -48,7 +48,7 @@ Do not implement a watchlist run by looping `scrape_company()`: it opens a proce
 
 ## Known limits
 
-- The gate runs **after** each article is fetched, so it saves storage and Groq spend, not crawl time. Gating on listing-page titles inside the worker needs titles carried out of `_listing_links_with_dates`.
+- The gate runs **after** each article is fetched, so it saves storage and LLM spend, not crawl time. Gating on listing-page titles inside the worker needs titles carried out of `_listing_links_with_dates`.
 - The `since` cutoff is a **naive** `datetime.now()` compared against MySQL `DATETIME` values. Correct while the API host and the MySQL server share a timezone; if they diverge, the window shifts by the offset and a nightly run silently misses or repeats companies. Pass an explicit `since` date to sidestep it.
 - Search cost is linear in entities; `max_entities_per_run` is the only throttle.
 - No scheduler job yet — the API endpoint is the trigger. The route body is thin enough that a nightly job can wrap the same calls.

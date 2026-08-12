@@ -1,11 +1,11 @@
 # Extractor Agent
 
 ## Role
-Uses an LLM (Groq / llama-3.3-70b-versatile) to extract structured deal data from M&A and funding articles. Only called after the Filter Agent confirms an article is relevant.
+Uses an LLM (Gemini / gemini-3.5-flash-lite) to extract structured deal data from M&A and funding articles. Only called after the Filter Agent confirms an article is relevant.
 
 ## Context
 - Lives in `src/processor/extractor.py`.
-- Class: `DealExtractor`. Initialized with a `Groq` client and model name.
+- Class: `DealExtractor`. Initialized with a client and model name. The client comes from `create_llm_client` (`src/llm_client.py`), which points the OpenAI SDK at Gemini's OpenAI-compatible endpoint — the call shape is unchanged from the Groq client it replaced.
 - Runs in the consumer (P2) subprocess.
 - Output is validated and normalized by `DealData` (Pydantic v2 model).
 - Article content is truncated to 4000 chars at call time.
@@ -14,7 +14,7 @@ Uses an LLM (Groq / llama-3.3-70b-versatile) to extract structured deal data fro
 
 | Setting | Value | Reason |
 |---------|-------|--------|
-| Model | `llama-3.3-70b-versatile` | Set in `config/settings.yaml` |
+| Model | `gemini-3.5-flash-lite` | Set in `config/settings.yaml` (`groq.model` — the block keeps its old name so existing command lines stay valid) |
 | `temperature` | `0.1` | Minimizes hallucination on structured fields |
 | `response_format` | `{"type": "json_object"}` | Forces valid JSON output |
 
