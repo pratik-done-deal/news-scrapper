@@ -1,8 +1,8 @@
 trafilatura==1.12.0
 requests==2.32.3
 beautifulsoup4==4.12.3
-# Gemini is called through its OpenAI-compatible endpoint (src/llm_client.py).
-openai>=1.40.0
+# Gemini, called through Google's own SDK (src/llm_client.py).
+google-genai>=1.0.0
 # Groq is no longer used by the service; kept for scripts/compare_extraction_models.py,
 # which A/Bs the old llama model against the current one.
 groq>=0.13.0

@@ -6,8 +6,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
-from openai import OpenAI
 from pydantic import BaseModel, Field, field_validator
+
+from ..llm_client import GeminiChatClient
 
 logger = logging.getLogger(__name__)
 
@@ -531,7 +532,7 @@ def empty_signal_snapshot(
 
 
 class CompanySignalScorer:
-    def __init__(self, client: OpenAI, model: str, temperature: float = 0.1):
+    def __init__(self, client: GeminiChatClient, model: str, temperature: float = 0.1):
         self.client = client
         self.model = model
         self.temperature = temperature

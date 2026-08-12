@@ -10,14 +10,17 @@ scraping:
   max_articles_per_source: 50
   batch_size: 10  # articles per DB write once all sources finish scraping
 
-# LLM used for deal extraction and company signals. Now Gemini, reached over
-# its OpenAI-compatible endpoint — the block keeps the `groq` name because the
-# CLI flag (--groq-api-key) and the exported config blob still use it; the key
-# it carries is a Gemini key.
+# LLM used for deal extraction and company signals. Now Gemini, called through
+# the google-genai SDK — the block keeps the `groq` name because the CLI flag
+# (--groq-api-key) and the exported config blob still use it; the key it
+# carries is a Gemini key.
+#
+# base_url is unset: the SDK knows Google's endpoint. Set it only to point at a
+# proxy. The old `.../v1beta/openai` value belonged to the compatibility
+# endpoint and is ignored if an older exported config still carries it.
 groq:
   model: gemini-3.5-flash-lite
   temperature: 0.1
-  base_url: https://generativelanguage.googleapis.com/v1beta/openai
 
 # Company deal-propensity signals (POST /companies/{id}/signals/generate).
 # Turned off for now — generating a snapshot is an LLM call per company, and we

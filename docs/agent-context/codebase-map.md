@@ -9,7 +9,7 @@ Use this as the broad orientation cache before source search. Trust source code 
 - Project: Deal and funding intelligence platform.
 - Runtime: Python data pipeline plus FastAPI read API.
 - Core pipeline: scrape article links and content, filter for M&A/funding relevance, extract structured deal data with Gemini, write Neo4j graph data.
-- Stack: FastAPI, Neo4j driver, PyMySQL, Pydantic v2, OpenAI SDK (pointed at Gemini's compatible endpoint), requests, BeautifulSoup, trafilatura, PyYAML.
+- Stack: FastAPI, Neo4j driver, PyMySQL, Pydantic v2, google-genai SDK (Gemini), requests, BeautifulSoup, trafilatura, PyYAML.
 - Configuration: `src/config.py` dataclass defaults, overridden by CLI flags on each entry point. No `.env`.
 - Offline development verification: `python -m pytest`.
 - Live smoke checks: `python validate_filter.py --groq-api-key <key>`, `python test_date_range.py`.

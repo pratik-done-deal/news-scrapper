@@ -10,11 +10,9 @@ import argparse
 import json
 import sys
 
-from openai import OpenAI
-
 from src.agent import SCRAPER_REGISTRY
 from src.config import ConfigError, add_config_arguments, load_config
-from src.llm_client import create_llm_client
+from src.llm_client import GeminiChatClient, create_llm_client
 from src.paths import load_settings, load_sources_config
 from src.processor.filter import NewsFilter
 
@@ -43,7 +41,7 @@ Content (truncated): {content}
 SEP = "─" * 70
 
 
-def ai_check(client: OpenAI, model: str, title: str | None, content: str | None) -> tuple[bool, str]:
+def ai_check(client: GeminiChatClient, model: str, title: str | None, content: str | None) -> tuple[bool, str]:
     try:
         prompt = AI_PROMPT.format(
             title=title or "(no title)",

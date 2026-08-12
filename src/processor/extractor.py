@@ -3,8 +3,9 @@ import logging
 import time
 from typing import Optional
 
-from openai import OpenAI
 from pydantic import BaseModel, field_validator
+
+from ..llm_client import GeminiChatClient
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ class DealData(BaseModel):
 
 
 class DealExtractor:
-    def __init__(self, client: OpenAI, model: str):
+    def __init__(self, client: GeminiChatClient, model: str):
         self.client = client
         self.model = model
 

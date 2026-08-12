@@ -5,7 +5,7 @@ Uses an LLM (Gemini / gemini-3.5-flash-lite) to extract structured deal data fro
 
 ## Context
 - Lives in `src/processor/extractor.py`.
-- Class: `DealExtractor`. Initialized with a client and model name. The client comes from `create_llm_client` (`src/llm_client.py`), which points the OpenAI SDK at Gemini's OpenAI-compatible endpoint — the call shape is unchanged from the Groq client it replaced.
+- Class: `DealExtractor`. Initialized with a client and model name. The client comes from `create_llm_client` (`src/llm_client.py`), which wraps the `google-genai` SDK in a chat-completions-shaped adapter — the call shape is unchanged from the Groq client it replaced.
 - Runs in the consumer (P2) subprocess.
 - Output is validated and normalized by `DealData` (Pydantic v2 model).
 - Article content is truncated to 4000 chars at call time.
