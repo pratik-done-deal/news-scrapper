@@ -6,7 +6,7 @@ a working default, and every one of them is overridable from the command line:
 `load_config(args)` lays whatever the caller actually passed over the defaults.
 Nothing reads `.env` any more.
 
-Secrets (`--neo4j-password`, `--groq-api-key`, `--mysql-password`) default to
+Secrets (`--neo4j-password`, `--gemini-api-key`, `--mysql-password`) default to
 empty on purpose. This file is tracked by git, so a real credential has to
 arrive on the command line, and a process that needs one it was not given
 fails loudly at startup rather than half-working.
@@ -67,8 +67,12 @@ class Neo4jSettings:
 
 @dataclass
 class GroqSettings:
-    """The LLM API key. Now a Gemini key — the section and flag keep the `groq`
-    name so existing command lines and exported config blobs stay valid."""
+    """The LLM API key — a Gemini key, passed as `--gemini-api-key`.
+
+    The section keeps the `groq` name because it is the key in the exported
+    NEWS_SCRAPPER_CONFIG blob and in `config/settings.yaml`; renaming it would
+    strand every already-exported blob. The CLI flag has been renamed, with
+    `--groq-api-key` kept as an alias."""
 
     api_key: str = ""
 
@@ -168,7 +172,7 @@ class AppConfig:
     def require_groq_api_key(self) -> str:
         if not self.groq.api_key:
             raise ConfigError(
-                "LLM API key is not set. Pass --groq-api-key (a Gemini key), or change the "
+                "Gemini API key is not set. Pass --gemini-api-key, or change the "
                 "default in src/config.py."
             )
         return self.groq.api_key
@@ -215,6 +219,9 @@ class _Option:
     type: Callable[[str], Any]
     help: str
     metavar: Optional[str] = None
+    # Older spellings of `flag` that still work. argparse maps them onto the
+    # same dest, so a rename costs no deployment a redeploy.
+    aliases: tuple[str, ...] = ()
 
     @property
     def dest(self) -> str:
@@ -231,7 +238,11 @@ OPTIONS: tuple[_Option, ...] = (
     _Option("--neo4j-user", "neo4j", "user", str, "Neo4j user"),
     _Option("--neo4j-password", "neo4j", "password", str, "Neo4j password (required)"),
     _Option("--neo4j-database", "neo4j", "database", str, "Neo4j database name"),
-    _Option("--groq-api-key", "groq", "api_key", str, "Gemini API key (required)"),
+    _Option(
+        "--gemini-api-key", "groq", "api_key", str,
+        "Gemini API key (required); --groq-api-key is a deprecated alias",
+        aliases=("--groq-api-key",),
+    ),
     _Option(
         "--auth-enabled", "auth", "enabled", boolean,
         "false serves every endpoint unauthenticated; local development only",
@@ -294,6 +305,7 @@ def add_config_arguments(
             continue
         group.add_argument(
             option.flag,
+            *option.aliases,
             dest=option.dest,
             type=option.type,
             default=None,

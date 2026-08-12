@@ -36,7 +36,7 @@ Read this before editing related behavior. Changes here tend to cross module bou
 
 ## Gotchas
 
-- Live scripts may need `--groq-api-key`, Neo4j, and network access.
+- Live scripts may need `--gemini-api-key`, Neo4j, and network access.
 - Scraper site structure can change without code changes.
 - The API job manager is in-memory; jobs are not durable across process restarts.
 - Prompt/schema changes can alter stored graph relationship meaning, not only output text.

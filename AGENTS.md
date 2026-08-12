@@ -75,7 +75,7 @@ Do not read every agent, skill, or cache file by default. If a module cache iden
 Nothing is read from the environment: defaults live in `src/config.py` and
 every one of them is a flag. The commands below spell out the full set each
 entry point accepts, with the default shown as the value — drop any line to
-keep that default. Only `--neo4j-password` and `--groq-api-key` have no usable
+keep that default. Only `--neo4j-password` and `--gemini-api-key` have no usable
 default and must always be passed. `--help` lists the same set.
 
 ```bash
@@ -86,7 +86,7 @@ python main.py \
     --neo4j-user neo4j \
     --neo4j-password <pw> \
     --neo4j-database newsscrapedatabase \
-    --groq-api-key <key> \
+    --gemini-api-key <key> \
     --mysql-host 127.0.0.1 \
     --mysql-port 3306 \
     --mysql-user <user> \
@@ -98,7 +98,7 @@ python main.py \
     --log-backup-count 5
 
 # Same, restricted to a date range (both dates required together)
-python main.py --neo4j-password <pw> --groq-api-key <key> \
+python main.py --neo4j-password <pw> --gemini-api-key <key> \
     --start-date 2025-01-01 --end-date 2025-01-31
 
 # API server  (Swagger: http://localhost:8000/docs)
@@ -107,7 +107,7 @@ python api_server.py \
     --neo4j-user neo4j \
     --neo4j-password <pw> \
     --neo4j-database newsscrapedatabase \
-    --groq-api-key <key> \
+    --gemini-api-key <key> \
     --auth-enabled true \
     --auth-base-url https://qa.done.deals \
     --auth-validate-path /api/company-service/v1/internal/token/validate \
@@ -132,24 +132,24 @@ python api_server.py \
 # Smallest API server that starts. Auth is on and company MySQL is skipped;
 # the five --mysql-* flags are optional as a group — omit them all and the API
 # runs without the company DB, or pass them all to enable it.
-python api_server.py --neo4j-password <pw> --groq-api-key <key>
+python api_server.py --neo4j-password <pw> --gemini-api-key <key>
 
 # Timers are off by default; opt exactly one instance in to own them.
-python api_server.py --neo4j-password <pw> --groq-api-key <key> \
+python api_server.py --neo4j-password <pw> --gemini-api-key <key> \
     --scheduler-enabled true
 
 # Dev: autoreload, no auth, stdout logging only
-python api_server.py --neo4j-password <pw> --groq-api-key <key> \
+python api_server.py --neo4j-password <pw> --gemini-api-key <key> \
     --api-reload true --auth-enabled false --log-file none --log-level DEBUG
 
 # Do not start the app module directly (`uvicorn src.api.app:app`): nothing has
 # run the parser, so it comes up on the bare defaults with no credentials.
 
-# Reprocess — same neo4j/groq/logging set as the pipeline
+# Reprocess — same neo4j/gemini/logging set as the pipeline
 python reprocess_article.py <article_id> \
     --neo4j-uri neo4j://127.0.0.1:7687 --neo4j-user neo4j --neo4j-password <pw> \
-    --neo4j-database newsscrapedatabase --groq-api-key <key>
-python reprocess_unprocessed.py --neo4j-password <pw> --groq-api-key <key> \
+    --neo4j-database newsscrapedatabase --gemini-api-key <key>
+python reprocess_unprocessed.py --neo4j-password <pw> --gemini-api-key <key> \
     [--dry-run] [--limit N]
 
 # Company MySQL schema inspection (read-only) — takes the --mysql-* set
@@ -219,7 +219,7 @@ intervals). Anything that identifies a deployment lives in `src/config.py`.
 --neo4j-user           neo4j
 --neo4j-password       <required, no default>
 --neo4j-database       newsscrapedatabase
---groq-api-key         <required, no default>   # a GEMINI key; flag name kept for compatibility
+--gemini-api-key       <required, no default>   # --groq-api-key still works as a deprecated alias
 
 # Auth — validated against company-service on every request
 --auth-enabled              true      # false = no auth at all; local dev only
@@ -297,7 +297,7 @@ default**. To run the timers at all, pass `--scheduler-enabled true` on exactly
 ```bash
 python -m pytest              # offline development verification
 python -m pytest tests/test_auth.py    # session validation, fully offline
-python validate_filter.py --groq-api-key <key>   # live LLM/news smoke check
+python validate_filter.py --gemini-api-key <key>   # live LLM/news smoke check
 python test_date_range.py     # live ET date range smoke check
 
 # Auth against the real company-service. Verifies config, the session, and —
@@ -311,7 +311,7 @@ python scripts/check_auth.py --session <sessionId> --all-routes
 # exercises the auth path rather than skipping it.
 python scripts/stub_auth_service.py &
 python api_server.py --auth-base-url http://localhost:9099 \
-    --neo4j-password <pw> --groq-api-key <key>
+    --neo4j-password <pw> --gemini-api-key <key>
 
 # Company MySQL integration tests — skipped unless a seeded test DB is reachable.
 # pytest takes no config flags, so these tests read MYSQL_* from the environment

@@ -6,7 +6,7 @@ These are articles where the LLM call failed (e.g. token limit) during
 the original pipeline run, leaving no deal node in the database.
 
 Usage:
-    python reprocess_unprocessed.py [--dry-run] [--limit N] --neo4j-password ... --groq-api-key ...
+    python reprocess_unprocessed.py [--dry-run] [--limit N] --neo4j-password ... --gemini-api-key ...
 
 Options:
     --dry-run   Print articles that would be processed without calling the LLM.

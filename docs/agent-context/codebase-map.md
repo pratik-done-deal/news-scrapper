@@ -12,7 +12,7 @@ Use this as the broad orientation cache before source search. Trust source code 
 - Stack: FastAPI, Neo4j driver, PyMySQL, Pydantic v2, google-genai SDK (Gemini), requests, BeautifulSoup, trafilatura, PyYAML.
 - Configuration: `src/config.py` dataclass defaults, overridden by CLI flags on each entry point. No `.env`.
 - Offline development verification: `python -m pytest`.
-- Live smoke checks: `python validate_filter.py --groq-api-key <key>`, `python test_date_range.py`.
+- Live smoke checks: `python validate_filter.py --gemini-api-key <key>`, `python test_date_range.py`.
 
 ## Key Directories
 

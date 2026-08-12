@@ -32,7 +32,7 @@ Do not claim live verification unless it was actually run and the required env v
 - Use Pydantic v2 validators for schema normalization.
 - Keep Cypher parameterized with `$param`; never interpolate user-controlled strings.
 - Keep LLM extraction deterministic: low temperature and JSON response format.
-- Secrets are passed as CLI flags (`--neo4j-password`, `--groq-api-key`, `--mysql-password`); they have empty defaults in `src/config.py` and must never be hardcoded there or printed.
+- Secrets are passed as CLI flags (`--neo4j-password`, `--gemini-api-key`, `--mysql-password`); they have empty defaults in `src/config.py` and must never be hardcoded there or printed.
 - Avoid editing generated files, `venv/`, `__pycache__/`, or logs.
 
 ## Architecture Notes

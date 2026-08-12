@@ -3,7 +3,7 @@ Re-run deal extraction on a single article by its ID.
 Deletes any existing Deal node(s) for the article and inserts a fresh one.
 
 Usage:
-    python reprocess_article.py <article_id> --neo4j-password ... --groq-api-key ...
+    python reprocess_article.py <article_id> --neo4j-password ... --gemini-api-key ...
 """
 
 import argparse

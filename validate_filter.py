@@ -3,7 +3,7 @@ Validation script — compares AI filter vs keyword filter side by side.
 No data is written to the database.
 
 Run:
-    python validate_filter.py --groq-api-key <key>
+    python validate_filter.py --gemini-api-key <key>
 """
 
 import argparse
