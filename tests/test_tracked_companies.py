@@ -3,12 +3,14 @@
 Covers the two halves separately — the repository write that stamps the
 reference onto a Company node, and the routes the two callers use.
 """
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.api.auth import current_user_id
 from src.api.dependencies import get_connection, get_job_manager
 from src.api.job_manager import JobManager
 from src.api.routes import tracked_companies
@@ -153,6 +155,9 @@ def build_client(registered=REGISTERED):
     app.state.repo.register_company.return_value = dict(registered)
     app.dependency_overrides[get_connection] = lambda: object()
     app.dependency_overrides[get_job_manager] = lambda: JobManager()
+    # The real app identifies the caller through an app-level dependency this
+    # bare app does not carry; the news route needs one to scope bookmarks.
+    app.dependency_overrides[current_user_id] = lambda: 50
     return TestClient(app), app
 
 
@@ -258,6 +263,7 @@ def test_filters_and_paging_reach_the_query():
     assert news.call_args.kwargs["offset"] == 5
     assert news.call_args.kwargs["limit"] == 5
     assert news.call_args.kwargs["bookmarked"] is True
+    assert news.call_args.kwargs["user_id"] == 50, "bookmarks are scoped to the caller"
     assert str(news.call_args.kwargs["date_from"]) == "2026-01-01"
 
 
@@ -270,3 +276,52 @@ def test_lookup_is_case_insensitive_on_the_reference():
         client.get("/api/news/tracked-companies/s5122")
 
     assert lookup.call_args.args[1] == "S5122"
+
+
+# ---------------------------------------------------------------------------
+# The Cypher behind the feed
+# ---------------------------------------------------------------------------
+
+def capture_cypher(**kwargs):
+    """Run get_news_by_external_id against a fake session; return its Cypher."""
+    statements = []
+    session = MagicMock()
+
+    def run(cypher, **params):
+        statements.append(cypher)
+        result = MagicMock()
+        result.single.return_value = {"total": 0}
+        result.__iter__ = lambda self: iter([])
+        return result
+
+    session.run.side_effect = run
+    conn = MagicMock()
+    conn.session.return_value.__enter__ = MagicMock(return_value=session)
+    conn.session.return_value.__exit__ = MagicMock(return_value=False)
+
+    tracked_companies.queries.get_news_by_external_id(conn, "S5122", **kwargs)
+    return statements
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"date_from": date(2026, 1, 1)},
+        {"date_to": date(2026, 8, 1)},
+        {"bookmarked": True, "user_id": 50},
+        {"bookmarked": False, "user_id": 50},
+    ],
+    ids=["date_from", "date_to", "bookmarked", "not_bookmarked"],
+)
+def test_a_filtered_feed_puts_a_with_between_the_call_and_the_where(filters):
+    """A bare WHERE cannot follow a CALL subquery — Neo4j rejects the statement
+    outright, so every filtered feed was a 500 until the WITH went in. Only the
+    unfiltered path is legal without it, which is why it stayed hidden."""
+    for cypher in capture_cypher(**filters):
+        assert "} WITH d, art WHERE" in " ".join(cypher.split())
+
+
+def test_an_unfiltered_feed_adds_no_where_at_all():
+    for cypher in capture_cypher():
+        assert "WHERE art.searched_company" in cypher, "the UNION leg keeps its own"
+        assert "WITH d, art WHERE" not in " ".join(cypher.split())

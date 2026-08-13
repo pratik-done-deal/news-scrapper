@@ -60,6 +60,8 @@ class DealResponse(BaseModel):
     deal_type: Optional[str] = None
     summary: Optional[str] = None
     extracted_at: datetime
+    # Bookmarked *by the calling user*, not by anyone. Always false on routes
+    # that do not identify the caller.
     is_bookmarked: bool = False
     companies: list[CompanyInDealResponse] = []
 
@@ -80,6 +82,7 @@ class DealWithArticleResponse(BaseModel):
     sector: Optional[str] = None
     deal_type: Optional[str] = None
     summary: Optional[str] = None
+    # Bookmarked *by the calling user* — see DealResponse.is_bookmarked.
     is_bookmarked: bool = False
     article: Optional[ArticleSummaryResponse] = None
 

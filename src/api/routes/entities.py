@@ -12,6 +12,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
+from ..auth import current_user_id
 from ..dependencies import get_connection, get_mysql_dao
 from ..schemas import EntityNewsResponse, EntitySummary
 from ...db import queries
@@ -51,6 +52,7 @@ def get_entity_news(
     page_size: int = Query(20, ge=1, le=100),
     dao: MySQLDAO = Depends(get_mysql_dao),
     conn: Neo4jConnection = Depends(get_connection),
+    user_id: Optional[int] = Depends(current_user_id),
 ):
     """A tracked company's news, keyed by its company DB reference.
 
@@ -73,6 +75,7 @@ def get_entity_news(
         date_from=date_from,
         date_to=date_to,
         bookmarked=bookmarked,
+        user_id=user_id,
         offset=offset,
         limit=page_size,
     )

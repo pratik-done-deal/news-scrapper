@@ -27,6 +27,10 @@ SCHEMA_CONSTRAINTS = [
     # feeds silently.
     "CREATE CONSTRAINT news_company_external_id IF NOT EXISTS FOR (c:NewsCompany) REQUIRE c.external_id IS UNIQUE",
     "CREATE CONSTRAINT news_company_signal_id IF NOT EXISTS FOR (s:NewsCompanySignal) REQUIRE s.id IS UNIQUE",
+    # The Done Deal user id from token/validate. Unique because it is the
+    # identity a bookmark hangs off — two nodes sharing one id would split a
+    # user's bookmarks in half depending on which one MERGE happened to find.
+    "CREATE CONSTRAINT news_user_user_id IF NOT EXISTS FOR (u:NewsUser) REQUIRE u.user_id IS UNIQUE",
 ]
 
 SCHEMA_INDEXES = [
@@ -40,7 +44,6 @@ SCHEMA_INDEXES = [
     "CREATE INDEX news_deal_sector IF NOT EXISTS FOR (d:NewsDeal) ON (d.sector)",
     "CREATE INDEX news_deal_deal_type IF NOT EXISTS FOR (d:NewsDeal) ON (d.deal_type)",
     "CREATE INDEX news_deal_extracted_at IF NOT EXISTS FOR (d:NewsDeal) ON (d.extracted_at)",
-    "CREATE INDEX news_deal_is_bookmarked IF NOT EXISTS FOR (d:NewsDeal) ON (d.is_bookmarked)",
     "CREATE INDEX news_company_id IF NOT EXISTS FOR (c:NewsCompany) ON (c.id)",
     "CREATE INDEX news_company_signal_generated_at IF NOT EXISTS FOR (s:NewsCompanySignal) ON (s.generated_at)",
 ]

@@ -24,10 +24,22 @@ class Neo4jConnection:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _bookmarked_flag(record, deal: dict) -> bool:
+    """Whether the *calling* user bookmarked this deal.
+
+    Popped off the node dict first: a bookmark used to be a property on the
+    deal itself, so a graph that has not run the drop migration yet would
+    otherwise report one person's bookmark to everyone. The property is dead
+    either way, so it is discarded rather than read.
+    """
+    deal.pop("is_bookmarked", None)
+    return bool(record.get("is_bookmarked", False))
+
+
 def _deal_row(record) -> dict:
     deal = dict(record["d"])
     deal["article_id"] = record["article_id"]
-    deal["is_bookmarked"] = bool(deal.get("is_bookmarked", False))
+    deal["is_bookmarked"] = _bookmarked_flag(record, deal)
     deal["companies"] = [
         {"id": c["id"], "name": c["name"], "role": c["role"]}
         for c in record["companies"]
@@ -39,23 +51,47 @@ def _deal_row(record) -> dict:
 def _deal_row_with_article(record) -> dict:
     deal = dict(record["d"])
     deal["article_id"] = record["article_id"]
-    deal["is_bookmarked"] = bool(deal.get("is_bookmarked", False))
+    deal["is_bookmarked"] = _bookmarked_flag(record, deal)
     art = record.get("article")
     deal["article"] = dict(art) if art else None
     return deal
 
 
-def _bookmark_condition(bookmarked: Optional[bool]) -> str:
-    """Cypher predicate on `d` for a bookmarked filter, or "" when not filtering.
+# Does the caller hold a bookmark on `d`? A bookmark is an edge from the user
+# rather than a flag on the deal, so this is the one shape both the filter and
+# the projection are built from.
+#
+# `WHERE u.user_id = $bookmark_user_id` rather than an inline `{user_id: ...}`
+# map for two reasons: the equality is served by the news_user_user_id
+# constraint's index, and a null user id (an unidentified caller) evaluates to
+# false instead of matching every user node.
+_BOOKMARK_EXISTS = (
+    "EXISTS { MATCH (u:NewsUser)-[:BOOKMARKED]->(d) WHERE u.user_id = $bookmark_user_id }"
+)
 
-    Missing `is_bookmarked` is treated as not-bookmarked. The `true` case is
-    written as a plain equality so the deal_is_bookmarked index can serve it.
+# Goes in the RETURN so each row carries the flag for *this* caller. An EXISTS
+# subquery rather than an OPTIONAL MATCH because these queries pair a deal with
+# its article and count the result — a traversal would multiply the row per
+# bookmark and inflate `total`.
+_BOOKMARK_PROJECTION = f"{_BOOKMARK_EXISTS} AS is_bookmarked"
+
+
+def _bookmark_condition(
+    bookmarked: Optional[bool], user_id: Optional[int]
+) -> tuple[str, dict]:
+    """Cypher predicate on `d` for a bookmarked filter, plus its params.
+
+    Returns ("", {}) when not filtering. A caller with no user id holds no
+    bookmarks at all, so `bookmarked=true` correctly matches nothing and
+    `bookmarked=false` matches everything — both fall out of the null
+    comparison without a special case.
     """
     if bookmarked is None:
-        return ""
+        return "", {}
+    params = {"bookmark_user_id": user_id}
     if bookmarked:
-        return "d.is_bookmarked = true"
-    return "coalesce(d.is_bookmarked, false) = false"
+        return _BOOKMARK_EXISTS, params
+    return f"NOT {_BOOKMARK_EXISTS}", params
 
 
 # A query is split into at most this many words. Each word costs its own pass
@@ -185,6 +221,7 @@ def search_articles_by_company_name(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     bookmarked: Optional[bool] = None,
+    user_id: Optional[int] = None,
     offset: int = 0,
     limit: int = 20,
 ) -> tuple[int, list[dict]]:
@@ -205,14 +242,16 @@ def search_articles_by_company_name(
     """
     # `name` filters the company; date filters apply to the source article.
     conditions = ["toLower(c.name) CONTAINS toLower($name)"]
-    params: dict = {"name": name}
+    # Bound unconditionally: the projection reports the caller's bookmark on
+    # every row, whether or not they are filtering by it.
+    params: dict = {"name": name, "bookmark_user_id": user_id}
     if date_from:
         params["date_from"] = datetime.combine(date_from, time.min).replace(tzinfo=timezone.utc).isoformat()
         conditions.append("art.published_at >= $date_from")
     if date_to:
         params["date_to"] = datetime.combine(date_to, time(23, 59, 59)).replace(tzinfo=timezone.utc).isoformat()
         conditions.append("art.published_at <= $date_to")
-    bookmark_cond = _bookmark_condition(bookmarked)
+    bookmark_cond, _ = _bookmark_condition(bookmarked, user_id)
     if bookmark_cond:
         conditions.append(bookmark_cond)
     where = "WHERE " + " AND ".join(conditions)
@@ -232,7 +271,7 @@ def search_articles_by_company_name(
             {match_clause}
             {where}
             WITH DISTINCT d, art
-            RETURN d, art.id AS article_id, art AS article
+            RETURN d, art.id AS article_id, art AS article, {_BOOKMARK_PROJECTION}
             ORDER BY art.published_at DESC
             SKIP $offset LIMIT $limit
             """,
@@ -265,6 +304,7 @@ def get_news_by_external_id(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     bookmarked: Optional[bool] = None,
+    user_id: Optional[int] = None,
     offset: int = 0,
     limit: int = 20,
 ) -> tuple[int, list[dict]]:
@@ -294,17 +334,23 @@ def get_news_by_external_id(
     `get_registered_company()` first.
     """
     conditions: list[str] = []
-    params: dict = {"external_id": external_id}
+    # `bookmark_user_id` is bound even when not filtering — the projection
+    # reports the caller's bookmark on every row.
+    params: dict = {"external_id": external_id, "bookmark_user_id": user_id}
     if date_from:
         params["date_from"] = datetime.combine(date_from, time.min).replace(tzinfo=timezone.utc).isoformat()
         conditions.append("art.published_at >= $date_from")
     if date_to:
         params["date_to"] = datetime.combine(date_to, time(23, 59, 59)).replace(tzinfo=timezone.utc).isoformat()
         conditions.append("art.published_at <= $date_to")
-    bookmark_cond = _bookmark_condition(bookmarked)
+    bookmark_cond, _ = _bookmark_condition(bookmarked, user_id)
     if bookmark_cond:
         conditions.append(bookmark_cond)
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    # `WITH d, art` is not decoration: a bare WHERE cannot follow a CALL
+    # subquery, so without it every filtered call is a Cypher syntax error and
+    # a 500. Only the unfiltered path is legal without it, which is why this
+    # went unnoticed — an unfiltered feed is the common case.
+    where = ("WITH d, art WHERE " + " AND ".join(conditions)) if conditions else ""
 
     # Anchor on the registered node, then collect its deals by both routes
     # before filtering, so the date/bookmark predicates apply to the union.
@@ -331,7 +377,7 @@ def get_news_by_external_id(
             {match_clause}
             {where}
             WITH DISTINCT d, art
-            RETURN d, art.id AS article_id, art AS article
+            RETURN d, art.id AS article_id, art AS article, {_BOOKMARK_PROJECTION}
             ORDER BY art.published_at DESC
             SKIP $offset LIMIT $limit
             """,
@@ -354,12 +400,15 @@ def list_deals(
     deal_type: Optional[str] = None,
     days: Optional[int] = None,
     bookmarked: Optional[bool] = None,
+    user_id: Optional[int] = None,
     q: Optional[str] = None,
     offset: int = 0,
     limit: int = 20,
 ) -> tuple[int, list[dict]]:
     conditions = []
-    params: dict = {}
+    # Bound even when `bookmarked` is None: the projection reports the caller's
+    # own bookmark on every row.
+    params: dict = {"bookmark_user_id": user_id}
 
     search_cond, search_params = _search_condition(q)
     if search_cond:
@@ -374,7 +423,8 @@ def list_deals(
     if days is not None:
         conditions.append("art.published_at >= $cutoff")
         params["cutoff"] = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    conditions.append(_bookmark_condition(bookmarked))
+    bookmark_cond, _ = _bookmark_condition(bookmarked, user_id)
+    conditions.append(bookmark_cond)
 
     active = [c for c in conditions if c]
     where = ("WHERE " + " AND ".join(active)) if active else ""
@@ -393,7 +443,7 @@ def list_deals(
             f"""
             MATCH (art:NewsArticle)-[:HAS_DEAL]->(d:NewsDeal)
             {where}
-            RETURN d, art.id AS article_id, art AS article
+            RETURN d, art.id AS article_id, art AS article, {_BOOKMARK_PROJECTION}
             ORDER BY art.published_at DESC
             SKIP $offset LIMIT $limit
             """,
@@ -423,22 +473,58 @@ def get_deal(conn: Neo4jConnection, deal_id: UUID) -> Optional[dict]:
 
 
 def set_deal_bookmark(
-    conn: Neo4jConnection, deal_id: UUID, bookmarked: bool
+    conn: Neo4jConnection,
+    deal_id: UUID,
+    bookmarked: bool,
+    user_id: int,
+    profile_id: Optional[str] = None,
+    user_type: Optional[int] = None,
 ) -> Optional[dict]:
-    """Set/clear a deal's bookmark flag; return the updated deal (deal + article).
+    """Set/clear *this user's* bookmark on a deal; return the deal + article.
 
-    Idempotent — setting the same value twice is a no-op. Returns None when the
-    deal does not exist so the caller can raise 404.
+    The bookmark is an edge from the user, not a flag on the deal, so one
+    person bookmarking a news item leaves everyone else's view untouched.
+
+    The user node is created on first bookmark and keyed on `user_id`; the
+    profile id and user type come along so the node is readable on its own, and
+    are refreshed on every write since company-service is their authority, not
+    us. Identity fields are passed in rather than taken as a session object so
+    this layer stays independent of the API's auth types.
+
+    Idempotent in both directions — MERGE will not duplicate an existing edge,
+    and clearing a bookmark that was never set deletes nothing. Returns None
+    when the deal does not exist so the caller can raise 404.
     """
+    if bookmarked:
+        cypher = """
+            MATCH (art:NewsArticle)-[:HAS_DEAL]->(d:NewsDeal {id: $id})
+            MERGE (u:NewsUser {user_id: $user_id})
+              ON CREATE SET u.created_at = $now
+            SET u.profile_id = $profile_id, u.user_type = $user_type
+            MERGE (u)-[b:BOOKMARKED]->(d)
+              ON CREATE SET b.created_at = $now
+            RETURN d, art.id AS article_id, art AS article, true AS is_bookmarked
+        """
+    else:
+        # OPTIONAL so a deal that was never bookmarked still returns its row
+        # (and so an unbookmark never conjures a user node for someone who has
+        # no bookmarks).
+        cypher = """
+            MATCH (art:NewsArticle)-[:HAS_DEAL]->(d:NewsDeal {id: $id})
+            OPTIONAL MATCH (u:NewsUser)-[b:BOOKMARKED]->(d)
+            WHERE u.user_id = $user_id
+            DELETE b
+            RETURN d, art.id AS article_id, art AS article, false AS is_bookmarked
+        """
+
     with conn.session() as session:
         record = session.run(
-            """
-            MATCH (art:NewsArticle)-[:HAS_DEAL]->(d:NewsDeal {id: $id})
-            SET d.is_bookmarked = $bookmarked
-            RETURN d, art.id AS article_id, art AS article
-            """,
+            cypher,
             id=str(deal_id),
-            bookmarked=bookmarked,
+            user_id=user_id,
+            profile_id=profile_id,
+            user_type=user_type,
+            now=datetime.now(timezone.utc).isoformat(),
         ).single()
         return _deal_row_with_article(record) if record else None
 

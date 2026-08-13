@@ -93,6 +93,11 @@ class AuthSettings:
     cache_ttl_seconds: float = 30.0
     # True only behind a proxy we control, which sets X-Forwarded-For itself.
     trust_proxy_headers: bool = False
+    # Who owns the bookmarks written while `enabled = False`. There is no
+    # session to identify the caller then, so everything lands on this one id —
+    # which is why it is only ever reached with auth off. With auth on, a
+    # session that carries no userId is refused rather than pooled here.
+    dev_user_id: int = 0
 
 
 @dataclass
@@ -258,6 +263,10 @@ OPTIONS: tuple[_Option, ...] = (
     _Option(
         "--auth-trust-proxy-headers", "auth", "trust_proxy_headers", boolean,
         "Read the client IP from X-Forwarded-For", _BOOL_META,
+    ),
+    _Option(
+        "--auth-dev-user-id", "auth", "dev_user_id", int,
+        "User id that owns bookmarks made while --auth-enabled is false",
     ),
     _Option("--api-host", "api", "host", str, "Bind address for the API"),
     _Option("--api-port", "api", "port", int, "Bind port for the API"),

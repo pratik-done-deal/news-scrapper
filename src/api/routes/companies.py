@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from ..auth import current_user_id
 from ..dependencies import get_connection
 from ..schemas import (
     CompanySignalResponse,
@@ -43,6 +44,7 @@ def search_news_by_company_name(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     conn: Neo4jConnection = Depends(get_connection),
+    user_id: Optional[int] = Depends(current_user_id),
 ):
     """A company's news, sourced from the deals it takes part in, newest first.
 
@@ -59,6 +61,7 @@ def search_news_by_company_name(
         date_from=date_from,
         date_to=date_to,
         bookmarked=bookmarked,
+        user_id=user_id,
         offset=offset,
         limit=page_size,
     )

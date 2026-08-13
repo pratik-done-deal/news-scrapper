@@ -23,6 +23,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 
 from .. import API_PREFIX
+from ..auth import current_user_id
 from ..dependencies import get_connection, get_job_manager
 from ..job_manager import JobManager
 from ..schemas import (
@@ -130,6 +131,7 @@ def get_company_news(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     conn: Neo4jConnection = Depends(get_connection),
+    user_id: Optional[int] = Depends(current_user_id),
 ):
     """A registered company's news, by its Done Deal reference.
 
@@ -160,6 +162,7 @@ def get_company_news(
         date_from=date_from,
         date_to=date_to,
         bookmarked=bookmarked,
+        user_id=user_id,
         offset=offset,
         limit=page_size,
     )

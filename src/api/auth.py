@@ -444,3 +444,66 @@ def get_user_session(request: Request) -> UserSession:
     if user_session is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user_session
+
+
+class BookmarkUser(BaseModel):
+    """The caller as the graph stores them, keyed by their Done Deal user id.
+
+    A narrower view of `UserSession` on purpose: these three fields are the
+    whole of what a `NewsUser` node holds, so the graph layer never has to
+    reach into a session object it does not own.
+    """
+
+    user_id: int
+    profile_id: Optional[str] = None
+    user_type: Optional[int] = None
+
+
+def _dev_user() -> BookmarkUser:
+    """The stand-in caller for a service running with auth disabled.
+
+    Every local request shares this identity, which is exactly the global
+    bookmark behaviour we are removing — acceptable only because auth is off,
+    where there is no second user to leak between.
+    """
+    return BookmarkUser(
+        user_id=get_config().auth.dev_user_id, profile_id="dev", user_type=None
+    )
+
+
+def require_bookmark_user(request: Request) -> BookmarkUser:
+    """Who to attribute a bookmark to, or 401.
+
+    Strict because a bookmark is *owned*: with no user id there is no owner,
+    and falling back to a shared identity would pool unrelated people's
+    bookmarks into one list. That is the bug this node exists to fix, so it is
+    refused rather than approximated.
+    """
+    if not auth_enabled():
+        return _dev_user()
+
+    session = get_user_session(request)
+    if session.user_id is None:
+        raise HTTPException(
+            status_code=401,
+            detail="This session carries no user id, so it cannot own a bookmark",
+        )
+    return BookmarkUser(
+        user_id=session.user_id,
+        profile_id=session.profile_id,
+        user_type=session.user_type,
+    )
+
+
+def current_user_id(request: Request) -> Optional[int]:
+    """The caller's user id for listings, or None when there isn't one.
+
+    Lenient where `require_bookmark_user` is strict: a deal listing is
+    perfectly serviceable without knowing who is asking — it just reports
+    nothing as bookmarked — so a session missing its user id must not turn a
+    read into a 401.
+    """
+    if not auth_enabled():
+        return _dev_user().user_id
+    session = getattr(request.state, "user_session", None)
+    return session.user_id if session is not None else None

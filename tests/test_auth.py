@@ -16,9 +16,12 @@ from src.api import API_PREFIX
 from src.api.auth import (
     AuthClient,
     AuthConfig,
+    BookmarkUser,
     UserSession,
+    current_user_id,
     extract_session_id,
     get_user_session,
+    require_bookmark_user,
     require_session,
 )
 from src.config import AppConfig, AuthSettings, reset_config, set_config
@@ -489,6 +492,90 @@ def test_auth_disabled_lets_everything_through():
     response = TestClient(build_app(client)).get("/api/news/articles")
 
     assert response.status_code == 200
+    assert http.post.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Who owns a bookmark
+# ---------------------------------------------------------------------------
+
+def build_bookmark_app(auth_client=None):
+    """The two identity dependencies, behind the real session guard."""
+    app = FastAPI(dependencies=[Depends(require_session)])
+    app.state.auth_client = auth_client or build_auth_client()[0]
+
+    @app.post(f"{API_PREFIX}/deals/bookmark")
+    def bookmark(user: BookmarkUser = Depends(require_bookmark_user)):
+        return user.model_dump()
+
+    @app.get(f"{API_PREFIX}/deals")
+    def deals(user_id=Depends(current_user_id)):
+        return {"user_id": user_id}
+
+    return app
+
+
+def session_without(field, **extra):
+    """A validate response with one identity field missing."""
+    data = {**VALID_BODY["data"], **extra}
+    data.pop(field)
+    return fake_response(body={**VALID_BODY, "data": data})
+
+
+def test_a_bookmark_is_owned_by_the_calling_session():
+    client, _ = build_auth_client()
+
+    response = TestClient(build_bookmark_app(client)).post(
+        "/api/news/deals/bookmark", headers={"Authorization": "sess-1"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "user_id": 10751,
+        "profile_id": "444a4f41-d57b-4008-ae15-be7d4910ddc4",
+        "user_type": 2,
+    }
+
+
+def test_a_session_with_no_user_id_cannot_own_a_bookmark():
+    """Falling back to a shared identity here would pool unrelated people's
+    bookmarks into one list — the bug the user node exists to fix."""
+    client, _ = build_auth_client(response=session_without("userId"))
+
+    response = TestClient(build_bookmark_app(client)).post(
+        "/api/news/deals/bookmark", headers={"Authorization": "sess-1"}
+    )
+
+    assert response.status_code == 401
+    assert "user id" in response.json()["detail"]
+
+
+def test_a_session_with_no_user_id_can_still_read_a_listing():
+    """A listing is serviceable without knowing the caller; it just shows
+    nothing as bookmarked. It must not 401."""
+    client, _ = build_auth_client(response=session_without("userId"))
+
+    response = TestClient(build_bookmark_app(client)).get(
+        "/api/news/deals", headers={"Authorization": "sess-1"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user_id"] is None
+
+
+def test_with_auth_off_bookmarks_land_on_the_dev_user():
+    """No session means no caller to attribute to, so local bookmarking uses
+    one configured id. Everyone shares it — acceptable only because there is
+    no second user with auth off."""
+    set_config(AppConfig(auth=AuthSettings(enabled=False, dev_user_id=7)))
+    client, http = build_auth_client()
+    test_client = TestClient(build_bookmark_app(client))
+
+    written = test_client.post("/api/news/deals/bookmark")
+    read = test_client.get("/api/news/deals")
+
+    assert written.json()["user_id"] == 7
+    assert read.json()["user_id"] == 7
     assert http.post.call_count == 0
 
 

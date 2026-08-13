@@ -12,6 +12,7 @@ from conftest import make_dao
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.api.auth import current_user_id
 from src.api.dependencies import get_connection, get_mysql_dao
 from src.api.routes import entities
 
@@ -41,6 +42,9 @@ def build_client(rows):
     dao, _ = make_dao(rows=rows)
     app.dependency_overrides[get_mysql_dao] = lambda: dao
     app.dependency_overrides[get_connection] = lambda: object()
+    # Stands in for the app-level session validation this bare app skips; the
+    # feed needs a caller to scope bookmarks to.
+    app.dependency_overrides[current_user_id] = lambda: 50
     return TestClient(app)
 
 
@@ -82,6 +86,7 @@ def test_paging_and_filters_reach_the_query():
     assert search.call_args.kwargs["offset"] == 20
     assert search.call_args.kwargs["limit"] == 10
     assert search.call_args.kwargs["bookmarked"] is True
+    assert search.call_args.kwargs["user_id"] == 50, "bookmarks are scoped to the caller"
 
 
 def test_a_company_with_no_deals_returns_an_empty_feed_not_an_error():
